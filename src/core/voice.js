@@ -951,13 +951,18 @@ class VoiceService {
     // onStart 先行（合成有网络耗时，口型/冻结等 UI 状态别等）
     opts.onStart?.();
     this._ttsPlayingOutloud = true; // 外放中：VAD 跳过判定（防自声打断）
-    const res = await ttsAPI.play({
-      text: input,
-      voice: opts.voice || cfg.edgeVoice || 'zh-CN-XiaoyiNeural',
-      rate: typeof opts.rate === 'number' ? opts.rate : 0,
-      pitch: typeof opts.pitch === 'number' ? opts.pitch : 0,
-    }).catch(() => null);
-    this._ttsPlayingOutloud = false;
+    let res;
+    try {
+      res = await ttsAPI.play({
+        text: input,
+        voice: opts.voice || cfg.edgeVoice || 'zh-CN-XiaoyiNeural',
+        rate: typeof opts.rate === 'number' ? opts.rate : 0,
+        pitch: typeof opts.pitch === 'number' ? opts.pitch : 0,
+      }).catch(() => null);
+    } finally {
+      this._ttsPlayingOutloud = false;
+      if (this._vadActive) this._restartVadRecorder(); // 丢弃回声污染流
+    }
     if (!res || res.ok !== true || res.played !== true) return false;
     opts.onEnd?.();
     return res.interrupted === true ? 'interrupted' : 'full';
@@ -1022,8 +1027,15 @@ class VoiceService {
       if (typeof w.ttsAPI?.playAudioFile !== 'function') return false;
       opts.onStart?.();
       this._ttsPlayingOutloud = true; // 外放中：VAD 跳过判定（防自声打断）
-      const r = await w.ttsAPI.playAudioFile({ audioBase64: chunks.join(''), format: 'mp3' }).catch(() => null);
-      this._ttsPlayingOutloud = false;
+      let r;
+      try {
+        r = await w.ttsAPI.playAudioFile({ audioBase64: chunks.join(''), format: 'mp3' }).catch(() => null);
+      } finally {
+        this._ttsPlayingOutloud = false;
+        // 播放结束：重启 recorder——播放期间录的流全是回声/静音（不可解码的坏 webm），
+        // 必须丢弃，下一句从干净流开始（否则转写永远失败=多轮对话失灵）
+        if (this._vadActive) this._restartVadRecorder();
+      }
       if (!r || r.ok !== true || r.played !== true) return false;
       opts.onEnd?.();
       return true;
