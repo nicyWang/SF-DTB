@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- connect-src https: 允许 LLM API 调用；unsafe-inline 允许内联 module 入口 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https: http://localhost http://127.0.0.1">
+  <title>桌面AI搭档</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    /* 立绘舞台：铺满 400x500 窗口（PIXI canvas 注入） */
+    #stage {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+    /* ===== 左下角操作坞：麦克风 + 对话输入条（统一容器，解决定位错乱） ===== */
+    #dock {
+      position: absolute;
+      left: 14px;
+      bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 1150;
+    }
+    /* ===== 对话输入条（双击模型唤起） ===== */
+    #chat-bar {
+      display: none; /* flex */
+      align-items: center;
+      gap: 4px;
+      width: 300px;
+      padding: 5px 5px 5px 12px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      border-radius: 20px;
+      box-shadow: 0 6px 22px rgba(31, 45, 80, 0.28), 0 1px 4px rgba(0, 0, 0, 0.1);
+      backdrop-filter: blur(10px);
+      transition: box-shadow .2s;
+    }
+    #chat-bar:focus-within {
+      box-shadow: 0 6px 24px rgba(91, 140, 255, 0.4), 0 1px 4px rgba(0, 0, 0, 0.1);
+      border-color: rgba(91, 140, 255, 0.55);
+    }
+    #chat-bar input {
+      flex: 1;
+      min-width: 0;
+      border: none;
+      outline: none;
+      background: transparent;
+      font-size: 13px;
+      padding: 6px 2px;
+      color: #2c3644;
+      font-family: inherit;
+    }
+    #chat-bar input::placeholder { color: #a8b3c4; }
+    #chat-send {
+      flex-shrink: 0;
+      border: none;
+      background: linear-gradient(135deg, #6d9bff, #5b8cff);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 15px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: filter .15s, transform .1s;
+    }
+    #chat-send:hover { filter: brightness(1.08); }
+    #chat-send:active { transform: scale(0.96); }
+    /* ===== 麦克风按钮（操作坞内圆形钮，语音对话入口） ===== */
+    #mic-btn {
+      position: relative;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      width: 40px;
+      height: 40px;
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.92);
+      color: #5b6b7f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 6px 20px rgba(31, 45, 80, 0.3), 0 1px 4px rgba(0, 0, 0, 0.1);
+      backdrop-filter: blur(10px);
+      transition: background .2s, color .2s, transform .15s, box-shadow .2s;
+      -webkit-app-region: no-drag;
+    }
+    #mic-btn:hover {
+      transform: scale(1.1);
+      color: #5b8cff;
+      box-shadow: 0 8px 24px rgba(91, 140, 255, 0.35);
+    }
+    #mic-btn:active { transform: scale(0.95); }
+    #mic-btn svg { width: 18px; height: 18px; display: block; pointer-events: none; }
+    #mic-btn .icon-speaker { display: none; }
+    /* 录音中：红色脉动 */
+    #mic-btn[data-phase="listening"] {
+      background: #e5484d;
+      color: #fff;
+      animation: mic-pulse 1.2s ease-out infinite;
+    }
+    #mic-btn[data-phase="listening"] .icon-mic { display: none; }
+    #mic-btn[data-phase="listening"] .icon-stop { display: block; }
+    /* TTS 播报中：扬声器形态 */
+    #mic-btn[data-phase="speaking"] {
+      background: #5b8cff;
+      color: #fff;
+    }
+    #mic-btn[data-phase="speaking"] .icon-mic { display: none; }
+    #mic-btn[data-phase="speaking"] .icon-speaker { display: block; }
+    /* 思考中（LLM 生成回复） */
+    #mic-btn[data-phase="thinking"] { opacity: 0.55; cursor: wait; }
+    #mic-btn[data-phase="thinking"] .icon-mic { display: none; }
+    #mic-btn[data-phase="thinking"] .icon-speaker { display: block; }
+    #mic-btn .icon-stop { display: none; }
+    @keyframes mic-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.45); }
+      70%  { box-shadow: 0 0 0 12px rgba(229, 72, 77, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0); }
+    }
+    /* ===== 右键菜单（临时简化版） ===== */
+    #ctx-menu {
+      position: absolute;
+      display: none;
+      min-width: 130px;
+      background: rgba(255, 255, 255, 0.98);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      padding: 4px;
+      z-index: 1200;
+      font-size: 12px;
+      color: #333;
+    }
+    #ctx-menu .item {
+      padding: 7px 12px;
+      border-radius: 7px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #ctx-menu .item:hover { background: rgba(91, 140, 255, 0.12); }
+    #ctx-menu .item.danger { color: #d64545; }
+    /* ===== debug 状态浮层（?debug=1 显示） ===== */
+    #debug-panel {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      display: none;
+      background: rgba(0, 0, 0, 0.62);
+      color: #9fe8b0;
+      font-size: 10px;
+      line-height: 1.6;
+      font-family: Menlo, monospace;
+      padding: 8px 10px;
+      border-radius: 8px;
+      z-index: 1300;
+      pointer-events: none;
+      white-space: pre;
+      max-width: 170px;
+      backdrop-filter: blur(4px);
+    }
+    #boot-status {
+      position: absolute;
+      bottom: 6px;
+      width: 100%;
+      text-align: center;
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.55);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+      z-index: 50;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <!-- 左下角操作坞：麦克风常驻 + 输入条（双击模型唤起） -->
+  <div id="dock">
+    <button id="mic-btn" data-phase="idle" title="语音对话（点击开始/结束）">
+      <svg class="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+        <line x1="12" y1="19" x2="12" y2="23"></line>
+        <line x1="8" y1="23" x2="16" y2="23"></line>
+      </svg>
+      <svg class="icon-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+      </svg>
+      <svg class="icon-stop" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+        <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+      </svg>
+    </button>
+    <div id="chat-bar">
+      <input id="chat-input" type="text" placeholder="跟小球说点什么… (Enter发送 / Esc关闭)" maxlength="500" autocomplete="off">
+      <button id="chat-send">发送</button>
+    </div>
+  </div>
+
+  <div id="ctx-menu"></div>
+  <div id="debug-panel"></div>
+  <div id="selftest-panel" style="display:none;position:absolute;top:6px;left:6px;z-index:1400;background:rgba(0,0,0,.75);padding:8px 10px;border-radius:8px;font:10px/1.7 Menlo,monospace;white-space:nowrap;pointer-events:none;"></div>
+  <div id="boot-status">启动中…</div>
+
+  <!-- ===== 依赖加载顺序（勿改）：pixi → sprite（替代 Live2D） ===== -->
+  <script src="../node_modules/pixi.js/dist/browser/pixi.min.js"></script>
+
+  <script type="module">
+    // ===== 应用入口：装配全部模块（T11 集成接线） =====
+    import { LLMService } from './core/llm.js';
+    import { MemoryService } from './core/memory.js';
+    import { PersonalityEngine } from './core/personality.js';
+    import { SpriteRenderer } from './core/sprite.js';
+    import { BallRenderer } from './core/ball.js';
+    import { BubbleUI } from './core/bubble.js';
+    import { PetController, CHARACTER_IDS, DEFAULT_CHARACTER_ID } from './core/pet.js';
+    import { PerceptionService } from './core/perception.js';
+    import { CharacterManager } from './core/characters.js';
+    import { DanmakuService } from './live/danmaku.js';
+    import { LiveMode } from './live/mode.js';
+    import { VoiceService } from './core/voice.js';
+    import { DigitalHumanEngine } from './core/digitalhuman.js';
+    import { KnowledgeBase } from './core/knowledge.js';
+    import { DoubaoRealtime } from './core/doubao-realtime.js';
+    import { AvatarLive } from './core/avatar-live.js';
+
+    const DEBUG = new URLSearchParams(location.search).get('debug') === '1'
+      || localStorage.getItem('pet-debug') === '1';
+    // 测试加速钩子：?fastidle=1 → 无聊/困倦阈值降为 10s/20s（仅调试用）
+    const FAST_IDLE = new URLSearchParams(location.search).get('fastidle') === '1';
+    // 集成自检钩子：?selftest=1 → 页面内自动跑 T11 接线验证，结果写入DOM（配合PET_AUTOQUIT_MS截图留证）
+    const SELFTEST = new URLSearchParams(location.search).get('selftest') === '1';
+
+    // 当前活动角色：CharacterManager 管理内置+用户自建角色，localStorage 持久化
+    // （key 'pet-active-character' 与 v1 兼容；默认 'handsome'）
+    const characters = new CharacterManager();
+    const ACTIVE_CHARACTER_KEY = 'pet-active-character';
+    function getActiveCharacter() {
+      return characters.getActive();
+    }
+    function setActiveCharacter(id) {
+      characters.setActive(id);
+    }
+    // 角色问候语：内置角色有专属文案，用户角色用名字+通用角色定位
+    const CHARACTER_GREETING = {
+      handsome: { name: '凌川', role: '小狼狗' },
+      beauty: { name: '苏晚', role: '小甜心' },
+    };
+    function getCharacterGreeting(id) {
+      return CHARACTER_GREETING[id]
+        || (() => { const c = characters.get(id); return { name: c ? c.name : '搭档', role: '专属搭档' }; })();
+    }
+
+    const $status = document.getElementById('boot-status');
+    const log = (msg) => { console.log('[pet-app]', msg); $status.textContent = msg; };
+    const readJSON = (key) => {
+      try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
+    };
+
+    // 早一步日志，确认脚本启动
+    log('script start');
+
+    // selftest 预置确定的初始配置（在模块装配前写入）
+    if (SELFTEST) {
+      localStorage.setItem('pet-danmaku-config', JSON.stringify({ type: 'mock' }));
+      localStorage.setItem('pet-perception-config', JSON.stringify({ enabled: false, interval: 30000 }));
+      localStorage.removeItem('pet-llm-config');
+    }
+
+    // selftest 结果面板
+    const stResults = [];
+    function stRecord(name, pass, detail) {
+      stResults.push({ name, pass, detail: String(detail) });
+      console.log(`[selftest] ${pass ? 'PASS' : 'FAIL'} ${name} :: ${detail}`);
+      const el = document.getElementById('selftest-panel');
+      if (el) {
+        el.innerHTML = stResults.map((r) =>
+          `<div style="color:${r.pass ? '#6fdd8b' : '#ff7b7b'}">${r.pass ? '✓' : '✗'} ${r.name}: ${r.detail}</div>`
+        ).join('') + `<div style="color:#fff;margin-top:4px">合计: ${stResults.filter(r => r.pass).length}/${stResults.length}</div>`;
+      }
+    }
+    const stLater = (ms, fn) => setTimeout(fn, ms);
+    const stBubble = () => (document.querySelector('.pet-bubble') || {}).textContent || '';
+
+    try {
+      // ---- 1. 基础服务（无 PIXI 依赖，先行创建，保证后续出错也有气泡可提示） ----
+      log('init bubble');
+      const bubble = new BubbleUI();
+      log('init llm');
+      // LLM：localStorage 有配置则用之（apiKey等），否则默认 mock 模式
+      const llm = new LLMService(localStorage.getItem('pet-llm-config') ? undefined : { model: 'mock' });
+      // 当前活动角色（localStorage 优先，默认 'handsome'）
+      const activeCharacter = getActiveCharacter();
+      log('active character: ' + activeCharacter);
+      // 性格/记忆按角色独立存储
+      const memory = new MemoryService({ llm, characterId: activeCharacter });
+      const personality = new PersonalityEngine(activeCharacter);
+
+      // ---- 2. 渲染器：小球模式(?ball=1 / localStorage pet-ball-mode=1) 或 写实立绘 ----
+      const BALL_MODE = new URLSearchParams(location.search).has('ball')
+        || localStorage.getItem('pet-ball-mode') === '1';
+      let sprite;
+      if (BALL_MODE) {
+        log('init ball');
+        const ballApp = new PIXI.Application({ transparent: true, autoDensity: true,
+          resolution: window.devicePixelRatio || 1, resizeTo: document.getElementById('stage'),
+          forceCanvas: true });
+        document.getElementById('stage').appendChild(ballApp.view);
+        sprite = new BallRenderer({ app: ballApp, container: ballApp.stage });
+        log('ball ready');
+      } else {
+        sprite = new SpriteRenderer({ characters });
+      }
+      try {
+        log('sprite.init()');
+        await sprite.init(document.getElementById('stage'));
+        log('sprite.setCharacter(' + activeCharacter + ')');
+        await sprite.setCharacter(activeCharacter);
+        log('sprite ready');
+        sprite.setScale(BALL_MODE ? 1 : 0.92); // 立绘留边距；小球原比例
+        // 同步托盘菜单的当前角色（避免托盘默认 handsome 而实际是其他角色的不一致）
+        if (window.windowAPI && typeof window.windowAPI.switchCharacter === 'function') {
+          const charInfo = characters.get(activeCharacter);
+          window.windowAPI.switchCharacter(activeCharacter, true, charInfo ? charInfo.name : null); // syncOnly=true 不广播
+        }
+      } catch (err) {
+        // 立绘加载失败：气泡友好提示，其余模块（聊天/记忆/性格）继续可用
+        console.error('[pet-app] 立绘初始化失败:', err);
+        bubble.showText('呜…我的形象加载失败了，但聊天功能还在哦（双击我试试）', 6000);
+        log('sprite fail: ' + err.message);
+      }
+
+      // ---- 3. 宠物控制器（状态机+行为引擎） ----
+      // 语音服务：TTS 播报 + ASR 识别（配置 'pet-voice-config'）
+      const voice = new VoiceService();
+      // 知识库：对话自动提取主人事实/偏好 → 向量检索注入（越聊越懂主人）
+      const knowledge = new KnowledgeBase({ llm });
+      // 豆包端到端实时语音（配置了 appId/accessToken 后优先启用：说完即答+服务端VAD打断）
+      const doubao = new DoubaoRealtime();
+      const avatarLive = new AvatarLive();
+      // 豆包TTS音频同步喂数字人驱动口型（24k→16k在AvatarLive内重采样）
+      const __doa = doubao._onAudio.bind(doubao);
+      doubao._onAudio = function(buf) {
+        try {
+          const u8 = (buf instanceof Uint8Array) ? buf : new Uint8Array(buf.buffer||buf, buf.byteOffset||0, buf.byteLength);
+          const n2 = u8.byteLength - (u8.byteLength % 2);
+          if (n2 > 0) avatarLive.feedAudio(new Int16Array(u8.buffer, u8.byteOffset, n2/2));
+        } catch {}
+        return __doa(buf);
+      };
+      const pet = new PetController({ llm, memory, personality, live2d: sprite, bubble, voice, knowledge, doubao },
+        { ...(FAST_IDLE ? { boredMs: 10000, sleepyMs: 20000, tickMs: 2000 } : {}), characterId: activeCharacter });
+      await pet.init();
+      // 小球模式：气泡跟随小球头顶（须在 BALL_MODE/sprite 定义之后）
+      if (typeof BALL_MODE !== 'undefined' && BALL_MODE && sprite && sprite._root) {
+        bubble.followTarget(() => ({
+          x: sprite._root.x,
+          y: sprite._root.y - (sprite._radiusScaled || 60) - 14,
+        }));
+      }
+      window.pet = pet; // 调试台暴露
+
+      // ---- 3.2 数字人引擎插槽（配置 'pet-dh-config'，mode!=off 时为下一阶段预留） ----
+      {
+        const dhConfig = DigitalHumanEngine.loadConfig();
+        if (dhConfig.mode && dhConfig.mode !== 'off') {
+          // TODO: 下一阶段接入 LiveTalking(本地)/硅基DUIX(云端)，替换 sprite+voice 的组合驱动
+          console.log('[pet-app] 数字人引擎配置 mode=' + dhConfig.mode
+            + ' endpoint=' + (dhConfig.endpoint || '(空)')
+            + '（引擎未实现，当前仍用立绘+程序化口型）');
+        }
+      }
+
+      // ---- 3.5 角色切换事件：托盘/设置窗口触发 → 重建档案 + 切立绘 ----
+      window.PetEvents?.on?.('character:switch', async ({ characterId } = {}) => {
+        if (!characters.get(characterId)) return; // 内置或已注册的用户角色
+        if (characterId === pet.characterId) return;
+        const prev = pet.characterId;
+        setActiveCharacter(characterId);
+        const ok = await pet.setCharacter(characterId);
+        if (ok) {
+          const info = getCharacterGreeting(characterId);
+          bubble.showText(`我是${info.name}，你的${info.role}~`, 3500);
+          log('character switched: ' + prev + ' → ' + characterId);
+        }
+      });
+
+      // ---- 4. 屏幕感知（perception.js 已自订阅 settings:updated 自动启停） ----
+      const perception = new PerceptionService({ llm, memory });
+      // 默认开启（有动因主动交流的数据源）；设置面板可关
+      {
+        let percepCfg = readJSON('pet-perception-config');
+        if (!percepCfg) {
+          percepCfg = { enabled: true, interval: 60000 }; // 60s 截屏分析一次
+          localStorage.setItem('pet-perception-config', JSON.stringify(percepCfg));
+        }
+        if (percepCfg.enabled) perception.start();
+      }
+      // 智谱用户默认视觉模型（glm-4v-flash 免费）；已配置过的不覆盖
+      {
+        const llmCfg = readJSON('pet-llm-config');
+        if (llmCfg && llmCfg.baseURL && llmCfg.baseURL.includes('bigmodel')
+          && !llmCfg.visionModel) {
+          llm.setConfig({ ...llmCfg, visionModel: 'glm-4v-flash' });
+        }
+      }
+
+      // ---- 5. 弹幕 + 直播模式 ----
+      let danmaku = null;
+      let liveMode = null;
+
+      /**
+       * 按当前 localStorage 配置重建弹幕链路（启动/热重载共用）
+       * type 缺省或 'off' → 断开（SOURCE_LOADERS 只认 mock/douyin，'off' 在此拦截）
+       */
+      async function setupLive() {
+        if (liveMode) {
+          await liveMode.stop({ greet: false }); // 内部会 danmaku.disconnect
+          liveMode = null;
+          danmaku = null;
+        }
+        const cfg = readJSON('pet-danmaku-config');
+        const type = cfg && cfg.type;
+        if (!type || type === 'off') {
+          log('danmaku: off');
+          return false;
+        }
+        danmaku = new DanmakuService();
+        const traits = personality.getTraits();
+        liveMode = new LiveMode({
+          danmaku,
+          llm,
+          config: {
+            // 性格人设注入直播回复 prompt
+            personality: `${traits.name}（${traits.species}）`,
+            // mock LLM 回复带 [mock] 前缀 → 直接走内置规则话术更自然
+            useLLM: llm.getConfig().model !== 'mock',
+          },
+        });
+        // LiveMode.start 内部调 danmaku.connect；开播问候经 speak:request → pet.speak
+        // 透传完整配置（script/interval/loop 供 mock 剧本等场景使用）
+        const ok = await liveMode.start({ source: { ...cfg } });
+        if (!ok) {
+          liveMode = null;
+          danmaku = null;
+          bubble.showText('弹幕源连接失败了…等下再试试？', 5000);
+          return false;
+        }
+        log('live mode on: ' + danmaku.connectedType);
+        return true;
+      }
+      await setupLive();
+
+      // ---- 5.5 直播事件回写性格/记忆（缝C）----
+      // 一次性挂到全局总线（PetEvents 在弹幕热重载间持久存在），
+      // 不放进 setupLive —— 避免重建时重复注册监听器。
+      // 注意：mode.js 的 live:event 载荷字段是 kind（live-start/live-stop/idle-rescue）。
+      const GIFT_SCORES = { '火箭': 5, '嘉年华': 5 }; // 大礼物里程碑加分
+      function wireLiveGrowth() {
+        const bus = window.PetEvents;
+        if (!bus || typeof bus.on !== 'function') return;
+        let msgWindow = [];   // 5秒滑动窗口内的弹幕时间戳
+        let lastActiveAt = 0; // danmaku_active 事件节流
+
+        // 礼物 → 性格成长 + 大礼物情感记忆里程碑
+        bus.on('danmaku:gift', ({ user, gift, count } = {}) => {
+          personality.applyEvent('gift');
+          const n = Number(count) || 1;
+          const score = GIFT_SCORES[gift] || (n >= 10 ? 5 : 0);
+          if (score > 0) {
+            memory.add('emotional', `${user || '神秘人'}送了${gift}x${n}！`,
+              { source: 'live', score });
+          }
+        });
+
+        // 弹幕热度 → 外向成长（5秒>10条 + 1分钟节流）
+        bus.on('danmaku:message', () => {
+          const now = Date.now();
+          msgWindow.push(now);
+          msgWindow = msgWindow.filter((t) => now - t < 5000);
+          if (msgWindow.length > 10 && now - lastActiveAt > 60000) {
+            personality.applyEvent('danmaku_active');
+            lastActiveAt = now;
+          }
+        });
+
+        // 冷场救场 → 独立成长；开播/下播 → 情感记忆
+        bus.on('live:event', ({ kind } = {}) => {
+          if (kind === 'idle-rescue') {
+            personality.applyEvent('danmaku_cold');
+          } else if (kind === 'live-start') {
+            memory.add('emotional', '今天开播了', { source: 'live', score: 2 });
+          } else if (kind === 'live-stop') {
+            memory.add('emotional', '今天下播了，辛苦啦', { source: 'live', score: 2 });
+          }
+        });
+      }
+      wireLiveGrowth();
+
+      // ---- 6. 设置热重载（settings.html 保存 → preload 中继 'settings:updated'） ----
+      window.PetEvents?.on?.('settings:updated', async ({ scope } = {}) => {
+        if (!Array.isArray(scope)) return;
+        if (scope.includes('llm')) {
+          const cfg = readJSON('pet-llm-config');
+          if (cfg) llm.setConfig(cfg);
+          log('llm 配置热更新: ' + llm.getConfig().model);
+        }
+        if (scope.includes('perception')) {
+          // perception.js 构造时已订阅 settings:updated（启停/interval 自处理），此处仅确认不重复处理
+          log('perception 配置更新（模块自处理）: ' + JSON.stringify(perception.getStatus()));
+        }
+        if (scope.includes('danmaku')) {
+          const on = await setupLive();
+          bubble.showText(on ? '直播弹幕已切换～' : '弹幕已断开', 3000);
+        }
+        if (scope.includes('voice')) {
+          // 语音配置热更新（TTS开关/语速/音色/ASR开关）
+          const vc = readJSON('pet-voice-config');
+          if (vc) voice.setConfig(vc);
+          log('voice 配置热更新: ' + JSON.stringify(vc));
+        }
+      });
+
+      log('');
+
+      // ---- 交互绑定 ----
+      // 1) 单击模型 → 摸头
+      sprite.onHit(() => pet.pat());
+
+      // 2) 长按1s → 开启拖拽模式（拖拽开启时不再长按检测，避免拖动中误触发）
+      const stage = document.getElementById('stage');
+      let lpTimer = null;
+      let lpStart = null;
+      stage.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || sprite.isDraggable()) return;
+        lpStart = { x: e.clientX, y: e.clientY };
+        lpTimer = setTimeout(() => {
+          lpTimer = null;
+          setDragMode(true);
+        }, 1000);
+      });
+      stage.addEventListener('pointermove', (e) => {
+        if (lpTimer && lpStart
+          && (Math.abs(e.clientX - lpStart.x) > 8 || Math.abs(e.clientY - lpStart.y) > 8)) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+      });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach((evt) =>
+        stage.addEventListener(evt, () => {
+          if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+        }));
+
+      function setDragMode(on) {
+        sprite.setDraggable(on);
+        pet.speak(on ? '拖拽模式开启！按住我就能移动窗口～' : '拖拽模式关闭啦');
+      }
+
+      // 3) 双击模型 → 打开对话输入条
+      const chatBar = document.getElementById('chat-bar');
+      const chatInput = document.getElementById('chat-input');
+      const chatSend = document.getElementById('chat-send');
+      const dock = document.getElementById('dock');
+
+      // ---- 穿透管理（关键修复：mic 曾点不了）----
+      // 全屏窗口默认 setIgnoreMouseEvents(true)。原逻辑只检测"鼠标是否在小球上"，
+      // 鼠标在 mic/输入条上时窗口仍穿透 → 点击落到下层应用。
+      // 现在把 dock 也纳入检测：鼠标在 UI 控件上 → 取消穿透（可点/可输入）。
+      let uiHover = false;
+      // ball.js 穿透让权钩子：UI 控件激活（hover 或输入条展开）时小球不得恢复穿透
+      window.__uiPinned = () => uiHover;
+      const updateDockHover = () => {
+        const inside = dock.matches(':hover') || chatBar.style.display === 'flex';
+        if (inside !== uiHover) {
+          uiHover = inside;
+          try { window.windowAPI?.setIgnoreCursor?.(!inside); } catch (e) { /* 浏览器模式 */ }
+        }
+      };
+      setInterval(updateDockHover, 120); // 轮询兜底（:hover 无法事件化且与 ball.js 的 hover 抢占）
+
+      stage.addEventListener('dblclick', (e) => {
+        if (sprite.hitTest(e.clientX, e.clientY).length > 0) openChatBar();
+      });
+      function openChatBar() {
+        chatBar.style.display = 'flex';
+        // 等待 display 生效后聚焦（修复：失焦后无法再次聚焦）
+        requestAnimationFrame(() => chatInput.focus());
+        pet.touch();
+      }
+      function closeChatBar() {
+        chatBar.style.display = 'none';
+        chatInput.value = '';
+        chatInput.blur();
+      }
+      async function sendChat() {
+        const text = chatInput.value.trim();
+        if (!text) { closeChatBar(); return; }
+        closeChatBar();
+        await pet.chat(text); // 流式回复由气泡打字机展示
+      }
+      chatSend.addEventListener('click', sendChat);
+      chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') sendChat();
+        else if (e.key === 'Escape') closeChatBar();
+      });
+      // 输入条失焦：不立即隐藏（保留内容），点击其他地方 3 秒后自动收起
+      let blurTimer = null;
+      chatInput.addEventListener('blur', () => {
+        blurTimer = setTimeout(() => {
+          // 双击小球或点发送会重新聚焦，这里只收起未被使用的输入条
+          if (chatBar.style.display === 'flex' && !dock.matches(':hover')) closeChatBar();
+        }, 2500);
+      });
+      chatInput.addEventListener('focus', () => {
+        if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
+      });
+
+      // 3.5) 语音对话：麦克风按钮（统一点击开/关持续对话）
+      //   recognition 模式：Web Speech 实时识别循环
+      //   recorder 模式：VAD 持续听（说话自动分段→智谱转写→chat→TTS播报→继续听）
+      const micBtn = document.getElementById('mic-btn');
+      micBtn.title = '语音对话（点击或快捷键 ⌘⇧空格）';
+      micBtn.addEventListener('click', () => pet.voiceChat());
+      // 全局快捷键 ⌘⇧Space（主进程 globalShortcut → voice:toggle）→ 免找按钮
+      window.PetEvents?.on?.('voice:toggle', () => pet.voiceChat());
+      // pet 广播语音阶段（listening/thinking/speaking/idle）→ 按钮形态切换
+      window.PetEvents?.on?.('voice:state', ({ phase } = {}) => {
+        if (typeof phase === 'string') micBtn.dataset.phase = phase;
+      });
+
+      // 4) 右键菜单（临时简化版）
+      const ctxMenu = document.getElementById('ctx-menu');
+      window.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        ctxMenu.innerHTML = '';
+        const items = [
+          {
+            label: sprite.isDraggable() ? '关闭拖拽模式' : '开启拖拽模式（长按也可）',
+            action: () => setDragMode(!sprite.isDraggable()),
+          },
+          {
+            label: '临时点击穿透 8 秒',
+            action: async () => {
+              await window.windowAPI?.setIgnoreCursor?.(true);
+              setTimeout(() => window.windowAPI?.setIgnoreCursor?.(false), 8000);
+            },
+          },
+          { label: '退出', danger: true, action: () => window.windowAPI?.quit?.() },
+        ];
+        for (const it of items) {
+          const div = document.createElement('div');
+          div.className = 'item' + (it.danger ? ' danger' : '');
+          div.textContent = it.label;
+          div.addEventListener('click', () => { closeMenu(); it.action(); });
+          ctxMenu.appendChild(div);
+        }
+        // 菜单不越界
+        const x = Math.min(e.clientX, window.innerWidth - 150);
+        const y = Math.min(e.clientY, window.innerHeight - 130);
+        ctxMenu.style.left = x + 'px';
+        ctxMenu.style.top = y + 'px';
+        ctxMenu.style.display = 'block';
+      });
+      function closeMenu() { ctxMenu.style.display = 'none'; }
+      window.addEventListener('click', (e) => {
+        if (!ctxMenu.contains(e.target)) closeMenu();
+      });
+
+      // ---- debug 状态浮层 ----
+      // 调试引用（CDP/console 可直接操作各模块）
+      window.liveRefs = { llm, memory, personality, sprite, bubble, perception, knowledge, doubao, avatar: avatarLive, getDanmaku: () => danmaku, getLiveMode: () => liveMode };
+
+      if (DEBUG) {
+        const panel = document.getElementById('debug-panel');
+        panel.style.display = 'block';
+        const refresh = () => {
+          const s = pet.getState();
+          const mem = memory.stats();
+          const t = s.personality || {};
+          const ps = perception.getStatus();
+          const live = liveMode && liveMode.running
+            ? `on(${danmaku && danmaku.connectedType})` : 'off';
+          panel.textContent =
+            `character: ${s.characterId}\n` +
+            `emotion: ${s.emotion}\n` +
+            `chatting: ${s.chatting}\n` +
+            `voice: ${s.voiceActive ? (s.speaking ? 'speaking' : 'on') : 'off'}\n` +
+            `idle: ${s.idleMinutes}min\n` +
+            `liveMode: ${s.liveMode ? live : 'off'}\n` +
+            `llm: ${llm.getConfig().model}\n` +
+            `mem: S${mem.short}/L${mem.long}/E${mem.emotional}\n` +
+            `percep: ${ps.enabled ? (ps.paused ? 'paused' : 'on') : 'off'} ${ps.lastScene || ''}\n` +
+            `pet: ${t.name || '?'} ${t.species || ''}\n` +
+            `活泼${Math.round((t.lively || 0) * 100)} 黏人${Math.round((t.clingy || 0) * 100)} ` +
+            `细腻${Math.round((t.sensitive || 0) * 100)}`;
+        };
+        refresh();
+        setInterval(refresh, 1000);
+      }
+
+      // ---- 演示模式：按 D 键依次演示所有情绪与动作 ----
+      let demoRunning = false;
+      window.addEventListener('keydown', async (e) => {
+        if (e.key !== 'd' && e.key !== 'D') return;
+        if (demoRunning) return;
+        demoRunning = true;
+        try {
+          const steps = [
+            () => { pet.setEmotion('happy'); pet.speak('开心！被夸奖的感觉最好啦～'); },
+            () => { pet.setEmotion('excited'); pet.speak('哇！！超级兴奋！！'); },
+            () => { pet.setEmotion('sad'); pet.speak('呜…有点委屈…'); },
+            () => { pet.setEmotion('sleepy'); pet.speak('好困…眼皮打架了…'); },
+            () => { pet.setEmotion('bored'); pet.speak('好无聊啊…没人理我…'); },
+            () => { pet.setEmotion('normal'); pet.speak('这是平静待机的样子，我会眨眼和轻轻呼吸'); },
+            () => { pet.speak('现在演示说话口型动画，看我嘴巴动！', 4000); },
+            () => { pet.pat(); },
+            () => { pet.setEmotion('normal'); pet.speak('演示完毕！我就是你的专属小可爱～'); },
+          ];
+          for (const [i, fn] of steps.entries()) {
+            fn();
+            await new Promise(r => setTimeout(r, i === 6 ? 4200 : 3200));
+          }
+        } finally { demoRunning = false; }
+      });
+
+      // 启动问候（含角色标识）
+      const traits = personality.getTraits();
+      const charGreeting = getCharacterGreeting(activeCharacter);
+      pet.speak(`我是${traits.name}，${charGreeting.role}${charGreeting.name}～双击我就能聊天哦，按D键看全部表情动作演示`);
+      log('ready');
+
+      // ---- T11 集成自检（?selftest=1，配合 PET_AUTOQUIT_MS 截图留证）----
+      // 时序注意：感知/场景评论检查安排在 LLM 换模型之前（mock 模式确定性轮转），
+      // 避免 fake-key 网络请求的不确定性。
+      if (SELFTEST) {
+        document.getElementById('selftest-panel').style.display = 'block';
+        stRecord('boot', true, '模块全部装配完成');
+
+        // A(3s): 启动状态——danmaku=mock 自动开播、perception 默认关
+        stLater(3000, () => {
+          const lm = liveMode;
+          stRecord('A-自动开播', !!(lm && lm.running && danmaku && danmaku.connectedType === 'mock'),
+            `live=${lm && lm.running}, type=${danmaku && danmaku.connectedType}, petLive=${pet.getState().liveMode}`);
+          stRecord('A-感知默认关', perception.getStatus().enabled === false,
+            `percep=${perception.getStatus().enabled}`);
+        });
+
+        // B(5s): 热重载 danmaku→off + perception→on
+        stLater(5000, () => {
+          localStorage.setItem('pet-danmaku-config', JSON.stringify({ type: 'off' }));
+          localStorage.setItem('pet-perception-config', JSON.stringify({ enabled: true, interval: 30000 }));
+          window.PetEvents.emit('settings:updated', { scope: ['danmaku', 'perception'] });
+        });
+
+        // C(10s): 热重载生效（perception mock 轮转首场景=work，确定性）
+        stLater(10000, () => {
+          stRecord('C-弹幕断开', liveMode === null && danmaku === null, `liveMode=${liveMode}, danmaku=${danmaku}`);
+          const ps = perception.getStatus();
+          stRecord('C-感知启动+场景识别', ps.enabled === true && ps.lastScene === 'work',
+            `enabled=${ps.enabled}, lastScene=${ps.lastScene}`);
+          stRecord('C-petLiveMode同步', pet.getState().liveMode === false, `petLive=${pet.getState().liveMode}`);
+        });
+
+        // D(11s): 强制场景评论（llm 仍为 mock → 本地台词池，确定性）
+        stLater(11000, () => {
+          pet.opts.sceneCommentProb = 1;
+          window.PetEvents.emit('scene:change', { scene: 'slack', confidence: 0.9, detail: '主人在刷社交媒体摸鱼' });
+        });
+        stLater(13500, () => {
+          const b = stBubble();
+          stRecord('E-场景评论', b.length > 0, `bubble="${b.slice(0, 30)}"`);
+        });
+
+        // B2(15s): llm 热换模型；C2(17s) 检查
+        stLater(15000, () => {
+          localStorage.setItem('pet-llm-config', JSON.stringify({ model: 'gpt-4o-mini', baseURL: 'https://api.openai.com/v1', apiKey: 'sk-test' }));
+          window.PetEvents.emit('settings:updated', { scope: ['llm'] });
+        });
+        stLater(17000, () => {
+          stRecord('C2-LLM热更新', llm.getConfig().model === 'gpt-4o-mini', `model=${llm.getConfig().model}`);
+        });
+
+        // F(18s): danmaku 切回 mock 热重连；G(23s) 检查
+        stLater(18000, () => {
+          localStorage.setItem('pet-danmaku-config', JSON.stringify({ type: 'mock' }));
+          window.PetEvents.emit('settings:updated', { scope: ['danmaku'] });
+        });
+        stLater(23000, () => {
+          const lm = liveMode;
+          stRecord('G-弹幕热重连', !!(lm && lm.running && danmaku && danmaku.connectedType === 'mock'),
+            `live=${lm && lm.running}, type=${danmaku && danmaku.connectedType}, petLive=${pet.getState().liveMode}`);
+        });
+
+        // H(30s): 弹幕互动采样 + 还原配置；I(33s) 检查
+        stLater(30000, () => {
+          const b = stBubble();
+          stRecord('H-弹幕互动说话', b.length > 0, `bubble="${b.slice(0, 30)}"`);
+          localStorage.setItem('pet-llm-config', JSON.stringify({ model: 'mock' }));
+          localStorage.setItem('pet-danmaku-config', JSON.stringify({ type: 'off' }));
+          localStorage.setItem('pet-perception-config', JSON.stringify({ enabled: false, interval: 30000 }));
+          window.PetEvents.emit('settings:updated', { scope: ['llm', 'danmaku', 'perception'] });
+        });
+        stLater(33000, () => {
+          stRecord('I-配置还原',
+            llm.getConfig().model === 'mock' && liveMode === null && perception.getStatus().enabled === false,
+            `llm=${llm.getConfig().model}, live=${liveMode}, percep=${perception.getStatus().enabled}`);
+        });
+
+        // ---- 缝C验证（34s~51s）：直播事件回写性格/记忆 ----
+        let stBase = null;
+        stLater(34000, () => {
+          stBase = {
+            counts: { ...personality.getEventCounts() },
+            mem: memory.stats(),
+          };
+          // 剧本弹幕：火箭(大礼物) + 12条刷屏(触发热度) + 小心心 + enter + follow
+          const script = [
+            { type: 'gift', user: '老板甲', gift: '火箭', count: 1, delay: 300 },
+            ...Array.from({ length: 12 }, (_, i) =>
+              ({ type: 'message', user: '观众' + i, text: '刷屏' + i, delay: 250 })),
+            { type: 'gift', user: '老板乙', gift: '小心心', count: 1, delay: 300 },
+            { type: 'enter', user: '新观众', delay: 300 },
+            { type: 'follow', user: '新粉丝', delay: 300 },
+          ];
+          localStorage.setItem('pet-danmaku-config', JSON.stringify({ type: 'mock', script }));
+          window.PetEvents.emit('settings:updated', { scope: ['danmaku'] });
+        });
+        stLater(45000, () => {
+          const c = personality.getEventCounts();
+          const m = memory.stats();
+          stRecord('J-礼物成长', (c.gift || 0) >= (stBase.counts.gift || 0) + 2,
+            `gift ${(stBase.counts.gift || 0)}→${c.gift || 0}`);
+          stRecord('J-弹幕热度成长', (c.danmaku_active || 0) >= (stBase.counts.danmaku_active || 0) + 1,
+            `active ${(stBase.counts.danmaku_active || 0)}→${c.danmaku_active || 0}`);
+          stRecord('J-开播/大礼物情感记忆', m.emotional > stBase.mem.emotional,
+            `E ${stBase.mem.emotional}→${m.emotional}`);
+        });
+        // 热重载一次 → 验证监听器无重复注册（手动emit一条gift应恰好+1）
+        stLater(46000, () => {
+          localStorage.setItem('pet-danmaku-config', JSON.stringify({ type: 'mock' }));
+          window.PetEvents.emit('settings:updated', { scope: ['danmaku'] });
+        });
+        stLater(50000, () => {
+          const before = personality.getEventCounts().gift || 0;
+          window.PetEvents.emit('danmaku:gift', { user: '测试员', gift: '小心心', count: 1 });
+          setTimeout(() => {
+            const after = personality.getEventCounts().gift || 0;
+            stRecord('K-热重载无重复注册', after === before + 1, `gift ${before}→${after} (+${after - before})`);
+            // 收尾还原
+            localStorage.setItem('pet-danmaku-config', JSON.stringify({ type: 'off' }));
+            window.PetEvents.emit('settings:updated', { scope: ['danmaku'] });
+          }, 600);
+        });
+      }
+    } catch (err) {
+      console.error('[pet-app] 初始化失败:', err);
+      if (SELFTEST) stRecord('boot', false, err.message);
+      log('初始化失败: ' + err.message);
+    }
+  </script>
+</body>
+</html>

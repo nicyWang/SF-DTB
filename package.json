@@ -1,0 +1,22 @@
+{
+  "name": "desktop-pet",
+  "version": "0.1.0",
+  "description": "桌面AI搭档 - Live2D桌面宠物 + LLM智能体 + 直播弹幕互动",
+  "main": "main/main.js",
+  "scripts": {
+    "start": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "dev": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "test:studio": "node test/character-studio-test.mjs"
+  },
+  "dependencies": {
+    "@volcengine/rtc": "^4.69.0",
+    "duix-guiji-light": "^0.4.0",
+    "electron-duix": "^0.1.9",
+    "onnxruntime-node": "^1.27.0",
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^6.5.10"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11"
+  }
+}

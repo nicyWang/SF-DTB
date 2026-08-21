@@ -1,0 +1,1419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https: http:">
+  <title>桌面AI搭档 - 设置</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #f5f6f8;
+      color: #2c3e50;
+      font-size: 13px;
+      padding: 16px 18px 72px;
+      overflow-y: auto;
+    }
+    h2 {
+      font-size: 15px;
+      margin: 18px 0 10px;
+      padding-left: 8px;
+      border-left: 3px solid #508cff;
+      color: #1a2a3a;
+    }
+    h2:first-child { margin-top: 0; }
+    .card {
+      background: #fff;
+      border: 1px solid #e4e8ee;
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .row { margin-bottom: 10px; }
+    .row:last-child { margin-bottom: 0; }
+    label { display: block; font-weight: 600; margin-bottom: 4px; color: #4a5a6a; }
+    input[type="text"], input[type="password"], select, textarea {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid #d5dbe3;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fff;
+      outline: none;
+      font-family: inherit;
+    }
+    textarea { resize: vertical; min-height: 44px; }
+    input:focus, select:focus, textarea:focus { border-color: #508cff; }
+    .inline { display: flex; gap: 10px; align-items: center; }
+    .inline .grow { flex: 1; }
+    .hint { color: #8a97a5; font-size: 11px; margin-top: 3px; }
+    button {
+      padding: 6px 14px;
+      border: 1px solid #d5dbe3;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button:hover { border-color: #508cff; color: #508cff; }
+    button.primary {
+      background: #508cff;
+      border-color: #508cff;
+      color: #fff;
+    }
+    button.primary:hover { background: #3a78f0; color: #fff; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .test-result { font-size: 12px; margin-top: 6px; min-height: 16px; }
+    .test-result.ok { color: #2e9e5b; }
+    .test-result.fail { color: #e05a5a; }
+    .switch-wrap { display: flex; align-items: center; gap: 8px; }
+    .switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0;
+      background: #cdd4dc;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .slider::before {
+      content: '';
+      position: absolute;
+      width: 16px; height: 16px;
+      left: 2px; top: 2px;
+      background: #fff;
+      border-radius: 50%;
+      transition: left .2s;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    .switch input:checked + .slider { background: #508cff; }
+    .switch input:checked + .slider::before { left: 18px; }
+    /* 宠物信息卡 */
+    .pet-info .name { font-size: 16px; font-weight: 700; color: #1a2a3a; margin-bottom: 6px; }
+    .pet-info .empty { color: #8a97a5; padding: 8px 0; text-align: center; }
+    .trait-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .trait-tag {
+      background: #eaf1ff;
+      color: #3a6fd8;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+    }
+    .event-counts { color: #6a7888; font-size: 12px; line-height: 1.7; }
+    /* ===== 角色工坊 ===== */
+    .char-list { display: flex; flex-wrap: wrap; gap: 10px; }
+    .char-card {
+      width: 88px;
+      border: 1px solid #e4e8ee;
+      border-radius: 8px;
+      padding: 6px 6px 4px;
+      text-align: center;
+      cursor: pointer;
+      position: relative;
+      background: #fff;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .char-card:hover { border-color: #a9c3f5; }
+    .char-card.active {
+      border-color: #508cff;
+      box-shadow: 0 0 0 2px rgba(80,140,255,.18);
+    }
+    .char-thumb {
+      width: 74px; height: 98px;
+      object-fit: cover; object-position: top;
+      border-radius: 6px;
+      background: #eef1f5;
+      display: block;
+      margin: 0 auto 4px;
+    }
+    .char-thumb-placeholder {
+      width: 74px; height: 98px;
+      display: flex; align-items: center; justify-content: center;
+      color: #8a97a5; font-size: 20px; font-weight: 700;
+      background: #eef1f5; border-radius: 6px;
+      margin: 0 auto 4px;
+    }
+    .char-name {
+      font-size: 12px; color: #2c3e50;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .char-src { font-size: 10px; color: #8a97a5; }
+    .char-del {
+      position: absolute; top: 2px; right: 2px;
+      width: 18px; height: 18px; line-height: 16px;
+      border: none; border-radius: 50%;
+      background: rgba(0,0,0,.45); color: #fff;
+      font-size: 11px; padding: 0; cursor: pointer;
+      display: none;
+    }
+    .char-card:hover .char-del { display: block; }
+    .char-del:hover { background: #d64545; color: #fff; }
+    /* tabs */
+    .tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+    .tab-btn.active {
+      background: #eaf1ff;
+      border-color: #508cff;
+      color: #3a6fd8;
+    }
+    .tab-pane { border: 1px dashed #e4e8ee; border-radius: 8px; padding: 10px; }
+    /* 面部气质 chips */
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      padding: 3px 10px;
+      border: 1px solid #d5dbe3;
+      border-radius: 14px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 12px;
+      color: #4a5a6a;
+      user-select: none;
+    }
+    .chip:hover { border-color: #508cff; }
+    .chip.active { background: #eaf1ff; border-color: #508cff; color: #3a6fd8; }
+    /* 照片预览 */
+    .photo-preview {
+      max-width: 120px; max-height: 160px;
+      border-radius: 8px;
+      border: 1px solid #e4e8ee;
+      display: block;
+      margin-top: 6px;
+      object-fit: cover;
+    }
+    /* 生成状态 */
+    .gen-status-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: #4a5a6a;
+    }
+    .gen-status-row.error { color: #e05a5a; }
+    .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid #d5dbe3;
+      border-top-color: #508cff;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* 生成结果预览 */
+    .gen-result-wrap {
+      display: flex; gap: 12px;
+      align-items: flex-start;
+    }
+    #gen-preview-img {
+      width: 150px;
+      border-radius: 8px;
+      border: 1px solid #e4e8ee;
+      background: #eef1f5;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+    .gen-result-side { flex: 1; min-width: 0; }
+    .gen-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    details.gen-prompt { margin-top: 8px; }
+    details.gen-prompt summary {
+      cursor: pointer; color: #8a97a5; font-size: 11px; user-select: none;
+    }
+    details.gen-prompt pre {
+      margin-top: 6px;
+      background: #f7f9fb;
+      border: 1px dashed #d5dbe3;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 11px;
+      max-height: 120px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    /* 生图API配置子块 */
+    .sub-block {
+      border-top: 1px dashed #e4e8ee;
+      padding-top: 10px;
+      margin-top: 12px;
+    }
+    .sub-block > label { color: #6a7888; }
+    /* 底部保存栏 */
+    .save-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: #fff;
+      border-top: 1px solid #e4e8ee;
+      padding: 10px 18px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    /* toast */
+    #toast {
+      position: fixed;
+      top: 14px; left: 50%;
+      transform: translateX(-50%) translateY(-60px);
+      background: #2e9e5b;
+      color: #fff;
+      padding: 8px 20px;
+      border-radius: 6px;
+      font-size: 13px;
+      transition: transform .25s;
+      z-index: 99;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    /* debug折叠块 */
+    details.debug { margin-top: 16px; }
+    details.debug summary {
+      cursor: pointer;
+      color: #8a97a5;
+      font-size: 12px;
+      user-select: none;
+    }
+    details.debug pre {
+      margin-top: 8px;
+      background: #fff;
+      border: 1px dashed #d5dbe3;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 11px;
+      max-height: 180px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+  </style>
+  <style>
+  /* ===== 分区导航布局（设置页 2.0） ===== */
+  body.settings-v2 { display: flex; min-height: 100vh; margin: 0; }
+  .snav { width: 168px; flex-shrink: 0; border-right: 1px solid #d5dbe3; padding: 16px 0; position: sticky; top: 0; align-self: flex-start; height: 100vh; overflow-y: auto; background: #f7f9fc; }
+  .snav h1 { font-size: 15px; margin: 0 18px 14px; color: #1f2733; }
+  .snav a { display: block; padding: 9px 18px; color: #4a5568; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+  .snav a:hover { background: #eef2f7; }
+  .snav a.act { color: #2b6de8; border-left-color: #2b6de8; background: #eaf1fe; font-weight: 600; }
+  .sbody { flex: 1; padding: 18px 26px 60px; max-width: 720px; }
+  .sec { display: none; }
+  .sec.act { display: block; }
+  @media (max-width: 700px) { body.settings-v2 { flex-direction: column; } .snav { width: 100%; height: auto; position: static; display: flex; overflow-x: auto; } .snav a { white-space: nowrap; border-left: none; border-bottom: 3px solid transparent; } .snav a.act { border-bottom-color: #2b6de8; border-left: none; } }
+  </style>
+</head>
+<body class="settings-v2">
+  <nav class="snav"><h1>小球设置</h1>
+    <a href="#brain" data-sec="brain" class="act">🧠 大脑</a>
+    <a href="#voice" data-sec="voice" class="">🎤 语音</a>
+    <a href="#avatarsec" data-sec="avatarsec" class="">🎭 形象</a>
+    <a href="#perception" data-sec="perception" class="">👁 感知与主动</a>
+    <a href="#wecom" data-sec="wecom" class="">💬 微信</a>
+    <a href="#about" data-sec="about" class="">ℹ️ 关于</a>
+  </nav>
+  <main class="sbody">
+  <section class="sec act" id="sec-brain">
+  <h2>LLM 服务</h2>
+  <div class="card">
+    <div class="row">
+      <label for="llm-base">Base URL</label>
+      <input type="text" id="llm-base" placeholder="https://api.openai.com/v1">
+    </div>
+    <div class="row">
+      <label for="llm-key">API Key</label>
+      <input type="password" id="llm-key" placeholder="sk-...">
+    </div>
+    <div class="row">
+      <label for="llm-model">模型</label>
+      <input type="text" id="llm-model" placeholder="gpt-4o-mini">
+    </div>
+    <div class="inline">
+      <button id="btn-test">测试连接</button>
+      <span class="test-result" id="test-result"></span>
+    </div>
+  </div>
+
+  </section>
+
+  <h2>宠物信息</h2>
+  <div class="card">
+    <div class="hint" style="margin-bottom:8px">当前角色的性格档案（对话中持续成长）。完整档案见「大脑」区 LLM 配置下方的角色切换。</div>
+    <div id="pet-info" class="pet-info-box">（加载中…）</div>
+  </div>
+
+  <section class="sec" id="sec-perception">
+  <h2>屏幕感知</h2>
+  <div class="card">
+    <div class="row switch-wrap">
+      <label class="switch">
+        <input type="checkbox" id="perception-enabled">
+        <span class="slider"></span>
+      </label>
+      <span>启用屏幕感知（定期截屏识别场景）</span>
+    </div>
+    <div class="row">
+      <label for="perception-interval">识别频率</label>
+      <select id="perception-interval">
+        <option value="15000">每 15 秒</option>
+        <option value="30000">每 30 秒</option>
+        <option value="60000">每 60 秒</option>
+        <option value="300000">每 5 分钟</option>
+      </select>
+      <div class="hint">频率越高越及时，但消耗更多 LLM 视觉调用额度</div>
+    </div>
+  </div>
+
+  <h2>直播弹幕</h2>
+  <div class="card">
+    <div class="row">
+      <label for="danmaku-type">弹幕源</label>
+      <select id="danmaku-type">
+        <option value="off">关闭</option>
+        <option value="mock">模拟源（本地测试）</option>
+        <option value="douyin">抖音直播</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="danmaku-room">房间 URL</label>
+      <input type="text" id="danmaku-room" placeholder="https://live.douyin.com/xxxxxxx">
+      <div class="hint">仅抖音源需要；模拟源可留空</div>
+    </div>
+  </div>
+
+  </section>
+  <section class="sec" id="sec-avatarsec">
+  <h2>实时数字人（火山 FlowAct-R1，可选）</h2>
+  <div class="card">
+    <div class="hint" style="margin-bottom:8px">
+      配置后语音对话时右下角出现真人数字人视频（口型同步）。需在火山控制台开通"实时互动数字人API"+"ByteRTC"，并购买并发额度。<br>
+      形象图需公网可访问的清晰半身照（正面、人脸占比大）。
+    </div>
+    <div class="row"><label for="av-account">火山账号ID</label><input type="text" id="av-account" placeholder="控制台右上角账号ID"></div>
+    <div class="row"><label for="av-ak">AccessKey</label><input type="text" id="av-ak" placeholder="IAM AccessKey"></div>
+    <div class="row"><label for="av-sk">SecretKey</label><input type="password" id="av-sk" placeholder="IAM SecretKey"></div>
+    <div class="row"><label for="av-role">形象图URL</label><input type="text" id="av-role" placeholder="https://... 半身正面照"></div>
+    <div class="row"><label for="av-rtcid">ByteRTC AppId</label><input type="text" id="av-rtcid" placeholder="RTC控制台创建应用"></div>
+    <div class="row"><label for="av-rtctoken">RTC Token</label><input type="password" id="av-rtctoken" placeholder="临时Token（测试用）"></div>
+  </div>
+
+  <h2>角色工坊</h2>
+  <div class="card" id="studio-card">
+    <!-- 1. 我的角色 -->
+    <div class="row">
+      <label>我的角色</label>
+      <div id="char-list" class="char-list"><span class="hint">加载中…</span></div>
+      <div class="hint">点击卡片切换当前角色；切换会重置该角色的独立性格和记忆数据</div>
+    </div>
+
+    <!-- 2. 新建角色：两个 Tab -->
+    <div class="row">
+      <label>新建角色</label>
+      <div class="tabs">
+        <button type="button" class="tab-btn active" data-tab="photo">上传照片</button>
+        <button type="button" class="tab-btn" data-tab="form">AI 生成</button>
+      </div>
+
+      <div id="tab-photo" class="tab-pane">
+        <div class="row">
+          <label for="photo-file">选择照片</label>
+          <input type="file" id="photo-file" accept="image/*">
+          <img id="photo-preview" class="photo-preview" alt="照片预览" style="display:none">
+        </div>
+        <div class="row">
+          <label for="photo-style">转绘风格</label>
+          <select id="photo-style"></select>
+          <div class="hint">用 LLM 视觉模型提取照片特征后转绘（需配置上方 LLM 服务）</div>
+        </div>
+        <div class="row">
+          <button id="btn-photo-convert" class="primary">AI 转绘</button>
+        </div>
+      </div>
+
+      <div id="tab-form" class="tab-pane" style="display:none">
+        <div class="row inline">
+          <div class="grow">
+            <label for="form-style">风格</label>
+            <select id="form-style"></select>
+          </div>
+          <div class="grow">
+            <label for="form-gender">性别</label>
+            <select id="form-gender"></select>
+          </div>
+          <div class="grow">
+            <label for="form-age">年龄段</label>
+            <select id="form-age"></select>
+          </div>
+        </div>
+        <div class="row">
+          <label>面部气质（可多选 2-3 个）</label>
+          <div id="form-faces" class="chips"></div>
+        </div>
+        <div class="row inline">
+          <div class="grow">
+            <label for="form-hair">发型</label>
+            <select id="form-hair"></select>
+          </div>
+          <div class="grow">
+            <label for="form-temperament">整体气质</label>
+            <select id="form-temperament"></select>
+          </div>
+        </div>
+        <div class="row">
+          <label for="form-clothing">服装</label>
+          <select id="form-clothing"></select>
+        </div>
+        <div class="row">
+          <label for="form-extra">补充描述（可选）</label>
+          <textarea id="form-extra" placeholder="例如：戴金丝眼镜，手拿咖啡杯…"></textarea>
+        </div>
+        <div class="row">
+          <button id="btn-form-generate" class="primary">生成立绘</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. 生图 API 配置 -->
+    <div class="sub-block">
+      <div class="row">
+        <label>生图 API 配置（OpenAI 兼容 images 接口）</label>
+        <div class="inline">
+          <div class="grow">
+            <input type="text" id="img-base" placeholder="Base URL：https://api.openai.com/v1">
+          </div>
+        </div>
+        <div class="inline" style="margin-top:6px">
+          <div class="grow">
+            <input type="password" id="img-key" placeholder="API Key：sk-...">
+          </div>
+          <div class="grow">
+            <input type="text" id="img-model" placeholder="模型：如 dall-e-3（mock=本地占位图）">
+          </div>
+        </div>
+        <div class="inline" style="margin-top:8px">
+          <button id="btn-img-save">保存配置</button>
+          <button id="btn-img-test">测试生图</button>
+          <span class="test-result" id="img-test-result"></span>
+        </div>
+        <div class="hint">模型填 mock 可零成本体验完整流程（程序化占位立绘）</div>
+      </div>
+    </div>
+
+    <!-- 4/5/6. 流程状态 + 生成预览 -->
+    <div class="row gen-status-row" id="gen-status-row" style="display:none">
+      <span class="spinner" id="gen-spinner" style="display:none"></span>
+      <span id="gen-status"></span>
+    </div>
+    <div class="row" id="gen-result" style="display:none">
+      <div class="gen-result-wrap">
+        <img id="gen-preview-img" alt="生成立绘预览">
+        <div class="gen-result-side">
+          <div class="row">
+            <label for="char-name">角色名字</label>
+            <input type="text" id="char-name" placeholder="给新角色起个名字…" maxlength="20">
+          </div>
+          <div class="gen-btns">
+            <button id="btn-gen-save" class="primary">用这张 · 保存角色</button>
+            <button id="btn-gen-regen">重生成</button>
+          </div>
+          <div class="gen-btns" id="switch-after-save" style="display:none">
+            <button id="btn-gen-switch" class="primary">立即切换为当前角色</button>
+          </div>
+          <details class="gen-prompt">
+            <summary>查看生成提示词</summary>
+            <pre id="gen-prompt-text"></pre>
+          </details>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </section>
+  <section class="sec" id="sec-voice">
+  <h2>实时语音（豆包端到端，推荐）</h2>
+  <div class="card">
+    <div class="hint" style="margin-bottom:8px">
+      端到端实时语音大模型：说完即答（几百毫秒），服务端智能断句+自动打断，最接近打电话体验。<br>
+      未配置时自动使用普通模式（录音→识别→回复）。开通：
+      <a href="#" onclick="require('electron').shell.openExternal('https://console.volcengine.com/speech/service/8');return false" style="color:#5b8cff">火山引擎·语音技术</a>
+    </div>
+    <div class="row">
+      <label for="db-appid">App ID</label>
+      <input type="text" id="db-appid" placeholder="火山引擎控制台获取">
+    </div>
+    <div class="row">
+      <label for="db-token">Access Token</label>
+      <input type="password" id="db-token" placeholder="火山引擎控制台获取">
+    </div>
+    <div class="row">
+      <label for="db-botname">TA的名字</label>
+      <input type="text" id="db-botname" placeholder="毛毛" maxlength="20">
+    </div>
+    <div class="row">
+      <label for="db-role">人设（背景/性格）</label>
+      <textarea id="db-role" rows="2" placeholder="例：你是主人的桌面小球宠物，陪伴主人工作，性格甜美粘人"></textarea>
+    </div>
+    <div class="row">
+      <label for="db-voice">音色</label>
+      <select id="db-voice">
+        <option value="zh_female_xiaohe_jupiter_bigtts">小何（甜美·台湾腔）</option>
+        <option value="zh_female_vv_jupiter_bigtts">vv（活泼灵动）</option>
+        <option value="zh_male_yunzhou_jupiter_bigtts">云舟（清爽沉稳·男）</option>
+        <option value="zh_male_xiaotian_jupiter_bigtts">小天（清爽磁性·男）</option>
+      </select>
+    </div>
+  </div>
+
+  <h2>语音对话</h2>
+  <div class="card">
+    <div class="row switch-wrap">
+      <label class="switch">
+        <input type="checkbox" id="voice-tts-enabled">
+        <span class="slider"></span>
+      </label>
+      <span>语音播报（TTS，回复自动朗读）</span>
+    </div>
+    <div class="row">
+      <label for="edge-tts-voice">真人音色（Edge TTS 神经网络语音）</label>
+      <select id="edge-tts-voice"></select>
+      <div class="hint">微软神经网络音色（甜美真人感），免费；不可用时自动降级智谱TTS→系统TTS</div>
+    </div>
+    <div class="row">
+      <label for="voice-tts-rate">播报语速（0.8 ~ 1.2）：<span id="voice-tts-rate-value">1.0</span></label>
+      <input type="range" id="voice-tts-rate" min="0.8" max="1.2" step="0.05" value="1">
+    </div>
+    <div class="row">
+      <label for="voice-voice">系统TTS音色（兜底）</label>
+      <select id="voice-voice">
+        <option value="">自动（优先中文女声）</option>
+      </select>
+      <div class="hint">列表为系统可用中文音色；音色在应用重启后首次播报时生效</div>
+    </div>
+    <div class="row switch-wrap">
+      <label class="switch">
+        <input type="checkbox" id="voice-asr-enabled">
+        <span class="slider"></span>
+      </label>
+      <span>语音识别（麦克风按钮说话）</span>
+    </div>
+  </div>
+
+  </section>
+  <section class="sec" id="sec-wecom">
+    <h2>微信连接（规划中）</h2>
+    <div class="card"><div class="hint">远程对话 · 派任务 · 收汇报——小程序/企业微信方案调研中，本分区将在 P1.5 启用时开放。</div></div>
+  </section>
+  <section class="sec" id="sec-about">
+    <h2>关于</h2>
+    <div class="card"><div class="row"><label>版本</label><span>v2.0 · desktop-pet</span></div><div class="row"><label>日志导出</label><button id="btn-export-logs" class="btn">导出（排障用）</button></div></div>
+  </section>
+  </main>
+  <script type="module">
+    // ================== 模块导入 ==================
+    import { LLMService } from './core/llm.js';
+    import { ImageGenService } from './core/imagegen.js';
+    import { CharacterManager } from './core/characters.js';
+    import { CharPromptBuilder, DEFAULT_PHOTO_FEATURES } from './core/charprompt.js';
+
+
+    // ================== 配置读写 ==================
+    // localStorage键与各模块保持一致：
+    //   llm.js: 'pet-llm-config' / perception: 'pet-perception-config' /
+    //   danmaku: 'pet-danmaku-config' / imagegen: 'pet-imagegen-config' /
+    //   characters: 'pet-characters' /
+    //   personality: 'pet-personality-{characterId}' /
+    //   memory: 'pet-memory-{characterId}' /
+    //   active character: 'pet-active-character'
+    const KEYS = {
+      llm: 'pet-llm-config',
+      perception: 'pet-perception-config',
+      danmaku: 'pet-danmaku-config',
+      imagegen: 'pet-imagegen-config',
+      voice: 'pet-voice-config',
+      characters: 'pet-characters',
+      activeCharacter: 'pet-active-character',
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function loadJSON(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch { return fallback; }
+    }
+
+    // ================== 服务实例 ==================
+    const characters = new CharacterManager();   // 用 window.characterAPI（preload 注入）
+    const imagegen = new ImageGenService();
+    const promptBuilder = new CharPromptBuilder();
+    const llm = new LLMService();
+
+    function getActiveCharacter() {
+      return characters.getActive();
+    }
+
+    function fillForm() {
+      const llmCfg = loadJSON(KEYS.llm, { baseURL: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o-mini' });
+      $('llm-base').value = llmCfg.baseURL || '';
+      $('llm-key').value = llmCfg.apiKey || '';
+      $('llm-model').value = llmCfg.model || '';
+
+      const per = loadJSON(KEYS.perception, { enabled: false, interval: 30000 });
+      $('perception-enabled').checked = !!per.enabled;
+      $('perception-interval').value = String(per.interval || 30000);
+
+      const dan = loadJSON(KEYS.danmaku, { type: 'off', roomUrl: '' });
+      $('danmaku-type').value = dan.type || 'off';
+      $('danmaku-room').value = dan.roomUrl || '';
+
+      const imgCfg = loadJSON(KEYS.imagegen, { baseURL: '', apiKey: '', model: '' });
+      $('img-base').value = imgCfg.baseURL || '';
+      $('img-key').value = imgCfg.apiKey || '';
+      $('img-model').value = imgCfg.model || '';
+
+      const avc = loadJSON('pet-avatar-config', {});
+      $('av-account').value = avc.accountId || '';
+      $('av-ak').value = avc.accessKey || '';
+      $('av-sk').value = avc.secretKey || '';
+      $('av-role').value = avc.roleImageUrl || '';
+      $('av-rtcid').value = avc.rtcAppId || '';
+      $('av-rtctoken').value = avc.rtcToken || '';
+
+      const dbc = loadJSON('pet-doubao-realtime-config', {});
+      $('db-appid').value = dbc.appId || '';
+      $('db-token').value = dbc.accessToken || '';
+      $('db-botname').value = dbc.botName || '';
+      $('db-role').value = dbc.systemRole || '';
+      $('db-voice').value = dbc.voice || 'zh_female_xiaohe_jupiter_bigtts';
+
+      const vc = loadJSON(KEYS.voice, { ttsEnabled: true, ttsRate: 1.0, voiceName: '', asrEnabled: true, edgeVoice: 'zh-CN-XiaoyiNeural' });
+      $('voice-tts-enabled').checked = vc.ttsEnabled !== false;
+      $('voice-tts-rate').value = String(vc.ttsRate || 1);
+      $('voice-tts-rate-value').textContent = Number(vc.ttsRate || 1).toFixed(2);
+      $('voice-voice').value = vc.voiceName || '';
+      $('voice-asr-enabled').checked = vc.asrEnabled !== false;
+      // Edge TTS 音色（主进程列表；默认晓伊=甜美活泼）
+      loadEdgeVoices(vc.edgeVoice || 'zh-CN-XiaoyiNeural');
+
+      renderActiveCharacter();
+      renderPetInfo();
+      renderDebug();
+    }
+
+    function collectConfig() {
+      return {
+        llm: {
+          baseURL: $('llm-base').value.trim(),
+          apiKey: $('llm-key').value.trim(),
+          model: $('llm-model').value.trim()
+        },
+        perception: {
+          enabled: $('perception-enabled').checked,
+          interval: parseInt($('perception-interval').value, 10) || 30000
+        },
+        danmaku: {
+          type: $('danmaku-type').value,
+          roomUrl: $('danmaku-room').value.trim()
+        },
+        avatar: {
+          accountId: $('av-account').value.trim(),
+          accessKey: $('av-ak').value.trim(),
+          secretKey: $('av-sk').value.trim(),
+          roleImageUrl: $('av-role').value.trim(),
+          rtcAppId: $('av-rtcid').value.trim(),
+          rtcToken: $('av-rtctoken').value.trim(),
+        },
+        doubao: {
+          appId: $('db-appid').value.trim(),
+          accessToken: $('db-token').value.trim(),
+          botName: $('db-botname').value.trim() || '毛毛',
+          systemRole: $('db-role').value.trim(),
+          voice: $('db-voice').value
+        },
+        voice: {
+          ttsEnabled: $('voice-tts-enabled').checked,
+          ttsRate: parseFloat($('voice-tts-rate').value) || 1,
+          voiceName: $('voice-voice').value,
+          asrEnabled: $('voice-asr-enabled').checked,
+          edgeVoice: $('edge-tts-voice').value || 'zh-CN-XiaoyiNeural'
+        }
+      };
+    }
+
+    function saveAll() {
+      const cfg = collectConfig();
+      localStorage.setItem(KEYS.llm, JSON.stringify(cfg.llm));
+      localStorage.setItem(KEYS.perception, JSON.stringify(cfg.perception));
+      localStorage.setItem(KEYS.danmaku, JSON.stringify(cfg.danmaku));
+      localStorage.setItem(KEYS.voice, JSON.stringify(cfg.voice));
+      localStorage.setItem('pet-doubao-realtime-config', JSON.stringify(cfg.doubao));
+      localStorage.setItem('pet-avatar-config', JSON.stringify(cfg.avatar));
+      showToast('已保存全部设置');
+      renderDebug();
+      // 通知宠物主窗口配置已更新（preload把IPC中继为PetEvents事件'settings:updated'）
+      if (window.windowAPI && window.windowAPI.notifySettingsUpdated) {
+        window.windowAPI.notifySettingsUpdated(['llm', 'perception', 'danmaku', 'voice']);
+      }
+    }
+
+    // ================== 角色信息展示（动态：内置+用户） ==================
+    function charLabel(id) {
+      const c = characters.get(id);
+      if (!c) return id;
+      if (c.source === 'builtin') {
+        return `${c.name}（${id === 'handsome' ? '帅哥' : '美女'}）`;
+      }
+      return `${c.name}（自建·${c.source === 'photo' ? '照片转绘' : 'AI生成'}）`;
+    }
+
+    function renderActiveCharacter() {
+      const id = getActiveCharacter();
+      const info = characters.get(id);
+      $('active-character-label').textContent = info
+        ? `${info.name}（${info.source === 'builtin' ? (id === 'handsome' ? '帅哥' : '美女') : '自建角色'}）— 你的${info.role || '专属搭档'}`
+        : '未知角色';
+      // 加载当前角色的 personality 显示
+      $('pet-info').dataset.character = id;
+    }
+
+    function switchCharacter(id) {
+      if (!characters.get(id)) return;
+      const cur = getActiveCharacter();
+      if (cur === id) {
+        showStatus(`已经是 ${charLabel(id)} 啦`);
+        return;
+      }
+      characters.setActive(id);
+      renderActiveCharacter();
+      // 通知主进程：主进程会通过 'character-switch' IPC → PetEvents 广播给宠物主窗口
+      if (window.windowAPI && typeof window.windowAPI.switchCharacter === 'function') {
+        const info = characters.get(id);
+        window.windowAPI.switchCharacter(id, false, info ? info.name : null);
+        showStatus(`已切换到 ${charLabel(id)}，宠物主窗口即将更新`);
+      } else {
+        showStatus('已切换（仅本地，未通知主窗口）');
+      }
+    }
+
+    function showStatus(msg) {
+      showToast(msg);
+    }
+
+    // ================== 宠物信息卡（按当前角色） ==================
+    const TRAIT_LABELS = {
+      lively: '活泼', calm: '沉稳', clingy: '粘人', independent: '独立',
+      cheerful: '开朗', shy: '害羞', curious: '好奇', gentle: '温柔',
+      outgoing: '外向', sensitive: '细腻', playful: '爱玩',
+    };
+    function renderPetInfo() {
+      const box = $('pet-info');
+      const cid = getActiveCharacter();
+      const p = loadJSON(`pet-personality-${cid}`, null);
+      if (!p || !p.name) {
+        box.innerHTML = '<div class="empty">该角色尚未创建（或首次启动时初始化）</div>';
+        return;
+      }
+      const traits = p.traits || {};
+      const tags = Object.entries(traits)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([k, v]) => `<span class="trait-tag">${escapeHtml(TRAIT_LABELS[k] || k)} ${Math.round(v * 100)}%</span>`)
+        .join('');
+      const counts = p.eventCounts || p.eventStats || p.stats || {};
+      const countLines = Object.entries(counts)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('　');
+      box.innerHTML = `
+        <div class="name">${escapeHtml(String(p.name))} <span style="font-size:11px;color:#8a97a5">(${escapeHtml(charLabel(cid))})</span></div>
+        ${tags ? `<div class="trait-tags">${tags}</div>` : ''}
+        <div class="event-counts">${countLines ? '事件计数：' + escapeHtml(countLines) : '暂无事件记录'}</div>`;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // ================== 测试连接 ==================
+    async function testConnection() {
+      const el = $('test-result');
+      const { baseURL, apiKey } = collectConfig().llm;
+      el.textContent = '连接中...';
+      el.className = 'test-result';
+      if (!baseURL) {
+        el.textContent = '✗ 请先填写 Base URL';
+        el.className = 'test-result fail';
+        return;
+      }
+      try {
+        const res = await fetch(baseURL.replace(/\/+$/, '') + '/models', {
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        });
+        if (res.ok) {
+          el.textContent = '✓ 连接成功';
+          el.className = 'test-result ok';
+        } else {
+          el.textContent = `✗ HTTP ${res.status}${res.status === 401 ? '（API Key 无效？）' : ''}`;
+          el.className = 'test-result fail';
+        }
+      } catch (err) {
+        el.textContent = '✗ 网络错误：' + (err.message || '无法连接');
+        el.className = 'test-result fail';
+      }
+    }
+
+    // ================== toast / debug ==================
+    let toastTimer = null;
+    function showToast(msg) {
+      const t = $('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+    }
+
+    function renderDebug() {
+      const out = {};
+      for (const [k, key] of Object.entries(KEYS)) {
+        out[k] = localStorage.getItem(key) ? loadJSON(key, null) : '(未设置)';
+      }
+      // 加上当前角色的 personality/memory 摘要
+      const cid = getActiveCharacter();
+      out.personalityCurrent = localStorage.getItem(`pet-personality-${cid}`)
+        ? loadJSON(`pet-personality-${cid}`, null) : '(未设置)';
+      out.memoryCurrent = localStorage.getItem(`pet-memory-${cid}`)
+        ? loadJSON(`pet-memory-${cid}`, null) : '(未设置)';
+      $('debug-config').textContent = JSON.stringify(out, null, 2);
+    }
+
+    // ============================================================
+    // 角色工坊
+    // ============================================================
+
+    // ---------- 我的角色列表 ----------
+    async function refreshCharList() {
+      const box = $('char-list');
+      const list = characters.list();
+      const active = getActiveCharacter();
+      box.innerHTML = '';
+      for (const c of list) {
+        const card = document.createElement('div');
+        card.className = 'char-card' + (c.id === active ? ' active' : '');
+        card.title = charLabel(c.id);
+
+        // 缩略图：内置 → assets 路径；用户 → IPC 读 base64
+        if (c.source === 'builtin') {
+          const img = document.createElement('img');
+          img.className = 'char-thumb';
+          img.src = `assets/characters/${c.id}/normal.png`;
+          card.appendChild(img);
+        } else {
+          const ph = document.createElement('div');
+          ph.className = 'char-thumb-placeholder';
+          ph.textContent = (c.name || '?').slice(0, 1);
+          card.appendChild(ph);
+          characters.readImage(c.id).then((b64) => {
+            if (b64) {
+              const img = document.createElement('img');
+              img.className = 'char-thumb';
+              img.src = 'data:image/png;base64,' + b64;
+              card.replaceChild(img, ph);
+            }
+          });
+        }
+
+        const name = document.createElement('div');
+        name.className = 'char-name';
+        name.textContent = c.name;
+        const src = document.createElement('div');
+        src.className = 'char-src';
+        src.textContent = c.source === 'builtin' ? '内置' : (c.source === 'photo' ? '照片转绘' : 'AI生成');
+        card.appendChild(name);
+        card.appendChild(src);
+
+        // 用户角色：删除按钮（内置不可删）
+        if (c.source !== 'builtin') {
+          const del = document.createElement('button');
+          del.className = 'char-del';
+          del.textContent = '×';
+          del.title = '删除该角色';
+          del.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (!confirm(`确定删除角色「${c.name}」吗？其图片与性格/记忆数据将被清理。`)) return;
+            const r = await characters.remove(c.id);
+            if (r.ok) {
+              showToast('角色已删除');
+              // 若删除的是活动角色，通知主窗口切回默认
+              if (!characters.get(active) || active === c.id) {
+                const fallback = characters.getActive();
+                if (window.windowAPI && typeof window.windowAPI.switchCharacter === 'function') {
+                  const info = characters.get(fallback);
+                  window.windowAPI.switchCharacter(fallback, false, info ? info.name : null);
+                }
+              }
+              refreshCharList();
+              renderActiveCharacter();
+              renderPetInfo();
+              renderDebug();
+            } else {
+              showToast(r.error || '删除失败');
+            }
+          });
+          card.appendChild(del);
+        }
+
+        card.addEventListener('click', () => switchCharacter(c.id));
+        box.appendChild(card);
+      }
+    }
+
+    // ---------- Tab 切换 ----------
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b === btn));
+        $('tab-photo').style.display = btn.dataset.tab === 'photo' ? '' : 'none';
+        $('tab-form').style.display = btn.dataset.tab === 'form' ? '' : 'none';
+      });
+    });
+
+    // ---------- 表单选项渲染（词库单一数据源：charprompt.js） ----------
+    function renderFormOptions() {
+      const opt = promptBuilder.getFormOptions();
+      const fillSelect = (el, items, selected) => {
+        el.innerHTML = '';
+        for (const it of items) {
+          const o = document.createElement('option');
+          o.value = it.value;
+          o.textContent = it.label;
+          if (it.value === selected) o.selected = true;
+          el.appendChild(o);
+        }
+      };
+      fillSelect($('photo-style'), opt.styles, 'realistic');
+      fillSelect($('form-style'), opt.styles, 'realistic');
+      fillSelect($('form-gender'), opt.genders, 'male');
+      fillSelect($('form-age'), opt.ageBands, '23-27');
+      fillSelect($('form-temperament'), opt.temperaments, 'mature');
+
+      // 发型（随性别联动）
+      renderHairOptions('male');
+      // 服装（按气质分组 optgroup）
+      const clothSel = $('form-clothing');
+      clothSel.innerHTML = '';
+      for (const g of opt.clothings) {
+        const og = document.createElement('optgroup');
+        og.label = g.group;
+        for (const p of g.options) {
+          const o = document.createElement('option');
+          o.value = p;
+          o.textContent = p;
+          og.appendChild(o);
+        }
+        clothSel.appendChild(og);
+      }
+      clothSel.value = '修身西装+白衬衫'; // 默认：商务精英首选
+
+      renderFaceChips('male');
+      $('form-gender').addEventListener('change', () => {
+        renderHairOptions($('form-gender').value);
+        renderFaceChips($('form-gender').value);
+      });
+    }
+
+    function renderHairOptions(gender) {
+      const opt = promptBuilder.getFormOptions();
+      const el = $('form-hair');
+      el.innerHTML = '';
+      for (const p of opt.hairs[gender] || []) {
+        const o = document.createElement('option');
+        o.value = p;
+        o.textContent = p;
+        el.appendChild(o);
+      }
+    }
+
+    function renderFaceChips(gender) {
+      const opt = promptBuilder.getFormOptions();
+      const box = $('form-faces');
+      box.innerHTML = '';
+      const faces = opt.faces[gender] || [];
+      faces.forEach((f, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip' + (i < 2 ? ' active' : ''); // 默认选中前两个
+        chip.textContent = f;
+        chip.addEventListener('click', () => {
+          const activeCount = box.querySelectorAll('.chip.active').length;
+          if (!chip.classList.contains('active') && activeCount >= 3) {
+            showToast('面部气质最多选 3 个');
+            return;
+          }
+          chip.classList.toggle('active');
+        });
+        box.appendChild(chip);
+      });
+    }
+
+    // ---------- 流程状态 ----------
+    const studioState = {
+      prompt: '',
+      imageBase64: null,
+      source: 'ai',        // 'photo' | 'ai'
+      style: 'realistic',
+      savedCharacterId: null,
+      lastAction: null,    // 重试/重生成 用的动作函数
+    };
+
+    function setBusy(msg) {
+      const row = $('gen-status-row');
+      const sp = $('gen-spinner');
+      if (!msg) {
+        row.style.display = msg === null ? 'none' : 'none';
+        sp.style.display = 'none';
+        $('gen-status').textContent = '';
+        row.classList.remove('error');
+        return;
+      }
+      row.style.display = 'flex';
+      row.classList.remove('error');
+      sp.style.display = msg ? 'inline-block' : 'none';
+      $('gen-status').textContent = msg;
+      const busy = !!msg;
+      ['btn-photo-convert', 'btn-form-generate', 'btn-gen-save', 'btn-gen-regen', 'btn-img-test']
+        .forEach((id) => { $(id).disabled = busy; });
+    }
+
+    function showGenError(msg) {
+      const row = $('gen-status-row');
+      row.style.display = 'flex';
+      row.classList.add('error');
+      $('gen-spinner').style.display = 'none';
+      $('gen-status').textContent = msg + '（可点击"重生成"重试）';
+      ['btn-photo-convert', 'btn-form-generate', 'btn-gen-save', 'btn-gen-regen', 'btn-img-test']
+        .forEach((id) => { $(id).disabled = false; });
+    }
+
+    // ---------- 生图核心 ----------
+    async function runGenerate(prompt, source, style) {
+      studioState.prompt = prompt;
+      studioState.source = source;
+      studioState.style = style;
+      studioState.lastAction = () => runGenerate(prompt, source, style);
+      setBusy('生成立绘中…（依赖生图服务速度，可能需要十几秒）');
+      // 用最新输入框内容构造服务（未保存的配置也能用）
+      const svc = new ImageGenService({
+        baseURL: $('img-base').value.trim(),
+        apiKey: $('img-key').value.trim(),
+        model: $('img-model').value.trim() || 'mock',
+      });
+      const r = await svc.generate(prompt);
+      if (!r.ok) {
+        showGenError(r.error || '生图失败');
+        return;
+      }
+      studioState.imageBase64 = r.imageBase64;
+      studioState.savedCharacterId = null;
+      setBusy(null);
+      renderGenPreview();
+    }
+
+    function renderGenPreview() {
+      if (!studioState.imageBase64) { $('gen-result').style.display = 'none'; return; }
+      $('gen-result').style.display = '';
+      $('gen-preview-img').src = 'data:image/png;base64,' + studioState.imageBase64;
+      $('gen-prompt-text').textContent = studioState.prompt || '(无)';
+      $('switch-after-save').style.display = 'none';
+    }
+
+    // ---------- Tab 1：上传照片 AI 转绘 ----------
+    let photoData = null; // {base64, mime}
+
+    function readImageFile(file) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result));
+        fr.onerror = () => reject(new Error('读取文件失败'));
+        fr.readAsDataURL(file);
+      });
+    }
+
+    $('photo-file').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) { photoData = null; $('photo-preview').style.display = 'none'; return; }
+      try {
+        const dataUrl = await readImageFile(file);
+        const m = /^data:(image\/[\w.+-]+);base64,(.*)$/s.exec(dataUrl);
+        if (!m) throw new Error('不支持的图片格式');
+        photoData = { mime: m[1].split('/')[1], base64: m[2] };
+        const pv = $('photo-preview');
+        pv.src = dataUrl;
+        pv.style.display = 'block';
+      } catch (err) {
+        photoData = null;
+        $('photo-preview').style.display = 'none';
+        showToast('照片读取失败：' + err.message);
+      }
+    });
+
+    async function convertPhoto() {
+      if (!photoData) { showToast('请先选择一张照片'); return; }
+      setBusy('正在提取照片特征…');
+      studioState.lastAction = convertPhoto;
+      try {
+        llm.setConfig(loadJSON(KEYS.llm, {}));
+        const reply = await llm.vision(photoData.base64, promptBuilder.buildVisionPrompt(), photoData.mime);
+        let features = CharPromptBuilder.parseVisionFeatures(reply);
+        let note = '';
+        if (!features) {
+          features = DEFAULT_PHOTO_FEATURES; // LLM mock/解析失败 → 兜底特征
+          note = '（特征提取不可用，已用默认特征）';
+        }
+        const style = $('photo-style').value;
+        const prompt = promptBuilder.buildFromPhotoFeatures(features, style);
+        setBusy(note ? note + ' 生成立绘中…' : '特征提取完成，生成立绘中…');
+        await runGenerate(prompt, 'photo', style);
+      } catch (err) {
+        showGenError('照片转绘失败：' + (err && err.message ? err.message : err));
+      }
+    }
+    $('btn-photo-convert').addEventListener('click', convertPhoto);
+
+    // ---------- Tab 2：表单 AI 生成 ----------
+    async function generateFromForm() {
+      const formData = {
+        style: $('form-style').value,
+        gender: $('form-gender').value,
+        ageBand: $('form-age').value,
+        face: [...$('form-faces').querySelectorAll('.chip.active')].map((c) => c.textContent),
+        hair: $('form-hair').value,
+        clothing: $('form-clothing').value,
+        temperament: $('form-temperament').value,
+        extra: $('form-extra').value,
+      };
+      const prompt = promptBuilder.buildFromForm(formData);
+      await runGenerate(prompt, 'ai', formData.style);
+    }
+    $('btn-form-generate').addEventListener('click', generateFromForm);
+
+    // ---------- 生成结果操作 ----------
+    $('btn-gen-regen').addEventListener('click', () => {
+      if (studioState.lastAction) studioState.lastAction();
+      else if (studioState.prompt) runGenerate(studioState.prompt, studioState.source, studioState.style);
+    });
+
+    $('btn-gen-save').addEventListener('click', async () => {
+      const name = $('char-name').value.trim();
+      if (!name) { showToast('请先给角色起个名字'); $('char-name').focus(); return; }
+      if (!studioState.imageBase64) { showToast('请先生成立绘'); return; }
+      setBusy('保存角色中…');
+      const r = await characters.create(name, studioState.imageBase64, {
+        source: studioState.source,
+        style: studioState.style,
+        model: $('img-model').value.trim() || 'mock',
+      });
+      setBusy(null);
+      if (!r.ok) {
+        showGenError(r.error || '保存失败');
+        return;
+      }
+      studioState.savedCharacterId = r.character.id;
+      showToast('角色已保存');
+      $('gen-status-row').style.display = 'flex';
+      $('gen-status').textContent = `「${name}」已保存，可立即切换或继续创建`;
+      $('switch-after-save').style.display = 'flex';
+      refreshCharList();
+      renderDebug();
+    });
+
+    $('btn-gen-switch').addEventListener('click', () => {
+      if (!studioState.savedCharacterId) return;
+      switchCharacter(studioState.savedCharacterId);
+      refreshCharList();
+      renderActiveCharacter();
+      renderPetInfo();
+    });
+
+    // ---------- 生图 API 配置 ----------
+    $('btn-img-save').addEventListener('click', () => {
+      imagegen.setConfig({
+        baseURL: $('img-base').value.trim(),
+        apiKey: $('img-key').value.trim(),
+        model: $('img-model').value.trim(),
+      });
+      showToast('生图配置已保存');
+      renderDebug();
+    });
+
+    $('btn-img-test').addEventListener('click', async () => {
+      const el = $('img-test-result');
+      el.textContent = '生成中...';
+      el.className = 'test-result';
+      const svc = new ImageGenService({
+        baseURL: $('img-base').value.trim(),
+        apiKey: $('img-key').value.trim(),
+        model: $('img-model').value.trim() || 'mock',
+      });
+      const r = await svc.generate('测试：一个浅灰色背景的简单人形立绘');
+      if (r.ok) {
+        el.textContent = r.mock ? '✓ mock 模式生成成功（占位图）' : '✓ 生图成功';
+        el.className = 'test-result ok';
+      } else {
+        el.textContent = '✗ ' + (r.error || '生图失败');
+        el.className = 'test-result fail';
+      }
+    });
+
+    // ============================================================
+    // 角色切换广播（托盘/其他窗口触发 → 刷新本面板）
+    // ============================================================
+    window.PetEvents?.on?.('character:switch', ({ characterId } = {}) => {
+      if (!characterId) return;
+      renderActiveCharacter();
+      renderPetInfo();
+      refreshCharList();
+    });
+
+    // ================== 绑定 ==================
+    $('btn-test').addEventListener('click', testConnection);
+    $('btn-save').addEventListener('click', saveAll);
+    $('btn-reload').addEventListener('click', () => { fillForm(); showToast('已还原为已保存的配置'); });
+
+    // ================== 语音对话：音色列表 + 语速联动 ==================
+    // 音色异步加载（onvoiceschanged），填充中文音色下拉
+    function renderVoiceOptions() {
+      if (typeof speechSynthesis === 'undefined') return;
+      const voices = (speechSynthesis.getVoices() || []).filter((v) => /^zh/i.test(v.lang || ''));
+      const sel = $('voice-voice');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">自动（优先中文女声）</option>';
+      for (const v of voices) {
+        const o = document.createElement('option');
+        o.value = v.name;
+        o.textContent = `${v.name}（${v.lang}）`;
+        sel.appendChild(o);
+      }
+      sel.value = current || ''; // 保留当前选择（含自动）
+    }
+    if (typeof speechSynthesis !== 'undefined') {
+      renderVoiceOptions();
+      if (typeof speechSynthesis.addEventListener === 'function') {
+        speechSynthesis.addEventListener('voiceschanged', renderVoiceOptions);
+      } else {
+        speechSynthesis.onvoiceschanged = renderVoiceOptions;
+      }
+    }
+    // 语速滑条实时显示数值
+    $('voice-tts-rate').addEventListener('input', () => {
+      $('voice-tts-rate-value').textContent = Number($('voice-tts-rate').value).toFixed(2);
+    });
+
+    // Edge TTS 真人音色（主进程提供列表；失败给内置兜底）
+    async function loadEdgeVoices(selected) {
+      const sel = $('edge-tts-voice');
+      const fallback = [
+        { id: 'zh-CN-XiaoyiNeural', label: '晓伊（甜美活泼）' },
+        { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓（温暖亲切）' },
+        { id: 'zh-CN-XiaohanNeural', label: '晓涵（温柔甜美）' },
+        { id: 'zh-CN-XiaoyanNeural', label: '晓颜（甜美灵动）' },
+        { id: 'zh-CN-YunxiNeural', label: '云希（阳光少年·男）' },
+        { id: 'zh-CN-YunyangNeural', label: '云扬（磁性播音·男）' },
+      ];
+      let voices = fallback;
+      try {
+        if (window.ttsAPI && window.ttsAPI.voices) {
+          const r = await window.ttsAPI.voices();
+          if (Array.isArray(r) && r.length) voices = r;
+        }
+      } catch (e) { /* 用兜底列表 */ }
+      sel.innerHTML = '';
+      for (const v of voices) {
+        const o = document.createElement('option');
+        o.value = v.id;
+        o.textContent = v.label;
+        sel.appendChild(o);
+      }
+      sel.value = voices.some((v) => v.id === selected) ? selected : 'zh-CN-XiaoyiNeural';
+    }
+
+    // ================== 初始化 ==================
+    renderFormOptions();
+    fillForm();
+    refreshCharList();
+
+    // ================== automock 自动化验证（?automock=1） ==================
+    // PET_STUDIO_TEST=1 npm start：设置窗口自动走完 mock 建角色→切换 全流程，配合截图留证
+    const AUTOMOCK = new URLSearchParams(location.search).get('automock') === '1';
+    if (AUTOMOCK) {
+      const log = (msg) => {
+        try { localStorage.setItem('pet-automock-log', JSON.stringify({ t: Date.now(), msg })); } catch {}
+        // 在 DOM 顶部插入常驻面包屑（不再自动删除，便于截图）
+        let box = document.getElementById('automock-log');
+        if (!box) {
+          box = document.createElement('div');
+          box.id = 'automock-log';
+          box.style.cssText = 'position:fixed;top:6px;left:6px;right:6px;max-height:240px;overflow:auto;background:#fff3cd;border:1px solid #ffeeba;padding:8px 12px;font-size:12px;z-index:200;border-radius:6px;color:#856404;font-family:Menlo,monospace;line-height:1.5';
+          document.body.appendChild(box);
+        }
+        const line = document.createElement('div');
+        line.textContent = '[' + new Date().toISOString().slice(11, 19) + '] ' + msg;
+        box.appendChild(line);
+        box.scrollTop = box.scrollHeight;
+      };
+      window.addEventListener('error', (e) => log('错误: ' + e.message + (e.error ? ' (' + (e.error.stack || e.error) + ')' : '')));
+      window.addEventListener('unhandledrejection', (e) => log('Promise 错误: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)));
+      (async () => {
+        try {
+          log('start: 配置生图mock...');
+          $('img-model').value = 'mock';
+          imagegen.setConfig({ baseURL: '', apiKey: '', model: 'mock' });
+          log('切到AI生成Tab...');
+          document.querySelector('.tab-btn[data-tab="form"]').click();
+          log('调 generateFromForm...');
+          await generateFromForm();
+          log('generateFromForm 返回, imageBase64=' + (studioState.imageBase64 ? studioState.imageBase64.length + 'b' : 'null'));
+          if (!studioState.imageBase64) throw new Error('生成失败: 无 imageBase64');
+          $('char-name').value = '测试角色' + Math.floor(Math.random() * 90 + 10);
+          const name = $('char-name').value.trim();
+          log('直接调 characters.create...');
+          const r = await characters.create(name, studioState.imageBase64, {
+            source: studioState.source, style: studioState.style, model: 'mock',
+          });
+          log('create 返回: ok=' + r.ok + (r.error ? ' err=' + r.error : '') + (r.character ? ' id=' + r.character.id : ''));
+          if (!r.ok) throw new Error('保存失败: ' + r.error);
+          studioState.savedCharacterId = r.character.id;
+          showToast('角色已保存');
+          $('gen-status-row').style.display = 'flex';
+          $('gen-status').textContent = '「' + name + '」已保存';
+          $('switch-after-save').style.display = 'flex';
+          refreshCharList();
+          renderDebug();
+          log('保存成功, 切换: ' + studioState.savedCharacterId);
+          // 切到新角色
+          switchCharacter(studioState.savedCharacterId);
+          refreshCharList();
+          renderActiveCharacter();
+          renderPetInfo();
+          document.getElementById('studio-card').scrollIntoView({ block: 'start' });
+          log('全流程完成 ✓');
+        } catch (err) {
+          log('错误: ' + (err && err.message ? err.message : err) + (err && err.stack ? '\n' + err.stack : ''));
+        }
+      })();
+    }
+</script>
+<script>
+  // 分区导航（独立脚本，DOM 就绪后绑定）
+  (function () {
+    function bind() {
+      document.querySelectorAll('.snav a').forEach(function (a) {
+        a.addEventListener('click', function (e) {
+          e.preventDefault();
+          document.querySelectorAll('.snav a,.sec').forEach(function (x) { x.classList.remove('act'); });
+          a.classList.add('act');
+          var el = document.getElementById('sec-' + a.dataset.sec);
+          if (el) el.classList.add('act');
+          try { localStorage.setItem('pet-settings-last-sec', a.dataset.sec); } catch (err) {}
+        });
+      });
+      try {
+        var last = localStorage.getItem('pet-settings-last-sec');
+        var target = last && document.querySelector('.snav a[data-sec="' + last + '"]');
+        if (target) target.click();
+      } catch (err) {}
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+    else bind();
+  })();
+</script>
+</body>
+</html>

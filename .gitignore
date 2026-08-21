@@ -1,0 +1,17 @@
+node_modules/
+data/
+dist/
+.DS_Store
+logs/
+*.log
+duix-models/
+# 根目录测试页与临时调试文件
+test-*.html
+test-electron.js
+test-video-*.js
+demo-v2.html
+pet-duix.html
+# 运行时产物
+*.pcm
+*.wav
+*.aiff
