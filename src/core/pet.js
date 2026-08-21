@@ -120,6 +120,9 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'mouse-scroll', description: '滚动（deltaY负=上,正=下,像素）', parameters: { type: 'object', properties: { deltaY: { type: 'number' }, deltaX: { type: 'number' } }, required: ['deltaY'] } } },
   { type: 'function', function: { name: 'key-press', description: '按键(key:enter/esc/tab/space/方向键/F1-12/单字符; modifiers:["cmd","shift","ctrl","alt"])', parameters: { type: 'object', properties: { key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } } }, required: ['key'] } } },
   { type: 'function', function: { name: 'hotkey-text', description: '快捷键："cmd+c" "cmd+shift+3" "enter" "esc"', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } },
+  { type: 'function', function: { name: 'ui-click', description: '【精准模式·优先用】按名字直接点击UI元素（零坐标猜测，光标不动，毫秒级）。name=元素名（"重新加载""发送""登录"），app=可选目标应用', parameters: { type: 'object', properties: { name: { type: 'string' }, app: { type: 'string' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'ui-set', description: '【精准模式】按名字找到输入框直接设值', parameters: { type: 'object', properties: { name: { type: 'string' }, value: { type: 'string' }, app: { type: 'string' } }, required: ['name', 'value'] } } },
+  { type: 'function', function: { name: 'ui-list', description: '列出当前应用可交互元素名（精准模式的眼睛）', parameters: { type: 'object', properties: { filter: { type: 'string' }, app: { type: 'string' } }, required: [] } } },
 ];
 
 class PetController {
@@ -388,6 +391,7 @@ class PetController {
                 'set-reminder': '定提醒', 'cancel-reminder': '取消提醒',
                 'wechat-send': `给 ${args?.contact || '联系人'} 发微信`,
                 'mouse-move': '移鼠标', 'mouse-dblclick': '双击', 'mouse-rightclick': '右键',
+                'ui-click': `点 ${args?.name || '元素'}`, 'ui-set': '填内容', 'ui-list': '看界面元素',
                 'mouse-drag': '拖拽', 'mouse-scroll': '滚动', 'key-press': '按键', 'hotkey-text': `按 ${args?.text || '快捷键'}`,
               };
               this.bubble.showHint(`🔧 ${labels[name] || name}中…`);
@@ -696,9 +700,30 @@ class PetController {
   }
 
   async _screenActionLoop(task) {
-    this._screenLooping = true; // 感知模块 _tick 检查此标志，回路期间暂停 vision（防劫持/并发冲突）
-    try { return await this._screenActionLoopInner(task); }
-    finally { this._screenLooping = false; }
+    this._screenLooping = true;
+    try {
+      // ── 快通路：任务里提到明确元素名 → AX 名字直击（毫秒级，零截图）──
+      // 提取候选名：引号内容 → "的XX按钮" → 动词短语 → 宽松兜底（去英文/助词后再提取）
+      const quoted = task.match(/["''「」“”]([^"''「」“”]{1,12}?)["''「」“”]/);
+      const de = task.match(/的([一-龥A-Za-z0-9]{2,8}?)按钮/);
+      const verbObj = task.match(/(?:点击|点一下|点|按一下|按|关掉|关闭|按下)(?:那个)?([一-龥A-Za-z0-9]{2,8}?)(?:按钮|选项|图标|菜单|标签|键)/);
+      let cand = (quoted?.[1] || de?.[1] || verbObj?.[1] || '').trim();
+      if (!cand) {
+        const cleaned = task.replace(/[A-Za-z]+|的|一下|那个|帮我/g, '');
+        const loose = cleaned.match(/(?:点击|点|按|关掉|关闭)([一-龥]{2,8})/);
+        cand = (loose?.[1] || '').trim();
+      }
+      if (cand && cand.length >= 2) {
+        try {
+          this.bubble.showHint?.(`⚡ 直接找「${cand}」…`, 1500);
+          const r = await window.windowAPI.invokeTool('ui-click', { name: cand });
+          if (String(r.result || r).includes('已')) {
+            return `搞定啦（直击）！${String(r.result || r).slice(0, 50)}`;
+          }
+        } catch { /* AX 没找到 → 落视觉回路 */ }
+      }
+      return await this._screenActionLoopInner(task);
+    } finally { this._screenLooping = false; }
   }
 
   async _screenActionLoopInner(task) {
