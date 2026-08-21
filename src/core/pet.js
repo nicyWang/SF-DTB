@@ -756,12 +756,21 @@ class PetController {
    * 返回：成功与否的自然语言汇报（供豆包代播）。
    */
   _isScreenAction(text) {
-    return /(点|点击|单击|双击|右键|关掉|关闭|按下|勾选|选择|拖|输入|填).{0,20}(它|那个|这个|按钮|弹窗|窗口|选项|框|图标|位置|搜索|输入)|帮我(点|关|拖|选|填|处理)|(点|关)一下(它|那个)|在.{0,12}(里|中|上面).{0,6}(输入|填|写)/.test(text);
+    return /(点|点击|单击|双击|右键|关掉|关闭|按下|勾选|选择|拖|输入|填).{0,20}(它|那个|这个|按钮|弹窗|窗口|选项|框|图标|位置|搜索|输入)|帮我(点|关|拖|选|填|处理)|(点|关)一下(它|那个)|在.{0,12}(里|中|上面).{0,6}(输入|填|写)|^(播放|放).{0,12}(歌|音乐|电台|电台歌曲|歌单)|(播放|放一?首)/.test(text);
   }
 
   async _screenActionLoop(task) {
     this._screenLooping = true;
     try {
+      // ── 预处理：播放类任务（播放XX/打开XX电台）先启动目标应用 ──
+      const playApp = task.match(/播放|听.*(歌|音乐|电台)/) && task.match(/酷狗|网易云|QQ音乐|QQ音乐|SpoBox|iTunes|音乐/);
+      if (playApp) {
+        const APP_MAP = { '酷狗': 'KugouMusic', '网易云': 'NeteaseMusic', 'QQ音乐': 'QQMusic', 'iTunes': 'Music' };
+        const key = Object.keys(APP_MAP).find((k) => task.includes(k));
+        if (key) {
+          try { await window.windowAPI.invokeTool('open-app', { appName: APP_MAP[key] }); await new Promise((r) => setTimeout(r, 1800)); } catch { /* ignore */ }
+        }
+      }
       // ── 快通路：任务里提到明确元素名 → AX 名字直击（毫秒级，零截图）──
       // 提取候选名：引号内容 → "的XX按钮" → 动词短语 → 宽松兜底（去英文/助词后再提取）
       const quoted = task.match(/["''「」“”]([^"''「」“”]{1,12}?)["''「」“”]/);
@@ -788,7 +797,7 @@ class PetController {
   }
 
   async _screenActionLoopInner(task) {
-    const MAX_STEPS = 4;
+    const MAX_STEPS = 8; // 多步任务（如"播放电台"需 开应用→找入口→点播放 多轮）4轮不够
     let silentTries = 0; // 同一目标静默点击次数（2次无效自动降级真实点击——菜单栏等系统元素不响应AX）
     let lastTarget = '';
     this.bubble.showHint?.('🎯 开始操作…', 2000);
