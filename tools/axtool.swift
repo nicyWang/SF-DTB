@@ -26,10 +26,17 @@ func walk(_ el: AXUIElement, _ depth: Int, _ out: inout [El]) {
   var titleAny: CFTypeRef?; var roleAny: CFTypeRef?
   AXUIElementCopyAttributeValue(el, kAXTitleAttribute as CFString, &titleAny)
   AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &roleAny)
-  var descAny: CFTypeRef?
+  var descAny: CFTypeRef?; var helpAny: CFTypeRef?; var idAny: CFTypeRef?; var valAny: CFTypeRef?
   AXUIElementCopyAttributeValue(el, kAXDescriptionAttribute as CFString, &descAny)
+  AXUIElementCopyAttributeValue(el, kAXHelpAttribute as CFString, &helpAny)
+  AXUIElementCopyAttributeValue(el, kAXIdentifierAttribute as CFString, &idAny)
+  AXUIElementCopyAttributeValue(el, kAXValueAttribute as CFString, &valAny)
   let title = (titleAny as? String) ?? ""
   let desc = (descAny as? String) ?? ""
+  var extra = ""
+  if let h = helpAny as? String, !h.isEmpty { extra += "/" + h }
+  if let i = idAny as? String, !i.isEmpty { extra += "#" + i }
+  if let v = valAny as? String, !v.isEmpty { extra += "=" + String(v.prefix(20)) }
   let role = (roleAny as? String) ?? ""
   var posAny: CFTypeRef?; var sizeAny: CFTypeRef?
   AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posAny)
@@ -39,7 +46,7 @@ func walk(_ el: AXUIElement, _ depth: Int, _ out: inout [El]) {
     AXValueGetValue(pv as! AXValue, .cgPoint, &pt)
     AXValueGetValue(sv as! AXValue, .cgSize, &sz)
     if sz.width > 1 && sz.height > 1 {
-      out.append(El(title: title + (desc.isEmpty ? "" : "/\(desc)"), role: role, frame: CGRect(origin: pt, size: sz), ref: el))
+      out.append(El(title: (title + (desc.isEmpty ? "" : "/\(desc)") + extra), role: role, frame: CGRect(origin: pt, size: sz), ref: el))
     }
   }
   var kidsAny: CFTypeRef?

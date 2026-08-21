@@ -803,15 +803,27 @@ class PetController {
     this.bubble.showHint?.('🎯 开始操作…', 2000);
     for (let step = 1; step <= MAX_STEPS; step++) {
       try {
-        // 1) 感知：截屏 + 定位目标 + 判断当前状态
+        // 1) 感知（Codex 式双通道）：
+        //    a. AX 控件树（首选）：读系统 Accessibility 的元素名+精确坐标——零猜测
+        //    b. 截图（辅助）：树里找不到目标（自绘UI/游戏）时视觉兜底
+        let axTree = '';
+        try {
+          const r = await window.windowAPI.invokeTool('ui-list', {});
+          if (r?.ok && r.result) axTree = String(r.result);
+        } catch { /* ignore */ }
         const b64 = window.screenAPI?.getScreenshot ? await window.screenAPI.getScreenshot() : null;
-        if (!b64) return '截屏失败，没法操作屏幕';
-        const img = 'data:image/png;base64,' + b64;
+        if (!b64 && !axTree) return '截屏失败，没法操作屏幕';
+        const img = b64 ? 'data:image/png;base64,' + b64 : null;
+        if (!img) return '无法截屏';
+        const treeHint = axTree
+          ? `\n\n【当前可交互元素表（系统级精确数据，优先从这里选）】\n${axTree.split('\n').slice(0, 50).join('\n')}\n表格式: 类型|名称|屏幕绝对坐标。选元素时直接用该坐标，比看图猜准。`
+          : '';
         const analysis = await this.llm.vision(img,
-          `任务："${task}"。当前屏幕截图（第${step}轮，此前已执行过${step - 1}次点击）。判定规则：
-- done=true 的条件：任务要求的界面元素已出现/已打开/目标面板已弹出/文字已输入可见。只要操作引发的界面变化已达成任务意图，就算完成（例：任务"点时间"→任何面板弹出即完成；任务"点XX按钮"→对应面板/状态出现即完成）。
-- 操作已产生明显界面变化但未见任务目标时：优先再点一次 target（坐标可修正）。
-严格JSON：{"done":bool, "target":{"name":"x","y":0-1000坐标,"action":"click|dblclick|rclick|type|none"}, "type_text":"", "status":"20字内画面状态"}`,
+          `任务："${task}"。当前屏幕截图（第${step}轮，此前已执行过${step - 1}次点击）。${treeHint}
+判定规则：
+- done=true：任务意图已达成（目标面板弹出/状态变化/文字可见）。例："点时间"→面板弹出即完成；"播放歌曲"→正在播放/播放面板出现即完成。
+- 定位规则：元素表里有的目标，直接用表里的绝对坐标（填入x_abs/y_abs），准确无误；表里没有才从截图估归一化坐标。
+严格JSON：{"done":bool, "target":{"name":"元素名","x":0-1000归一化,"y":0-1000,"x_abs":表里的绝对x或-1,"y_abs":表里的绝对y或-1,"action":"click|dblclick|rclick|type|none"}, "type_text":"", "status":"20字内画面状态"}`,
           'image/png');
         const m = String(analysis || '').match(/\{[\s\S]*\}/);
         if (!m) return `第${step}轮看不懂屏幕，放弃了。任务：${task}`;
@@ -826,9 +838,10 @@ class PetController {
           if (step >= MAX_STEPS) return `试了${step}轮还是不知道怎么操作：${j.status}`;
           continue; // 再看一眼（屏幕可能在动）
         }
-        // 4) 行动：坐标换算 + 执行（静默优先；同目标2次静默无效→降级真实点击保完成率）
-        const px = Math.round((j.target.x / 1000) * screen.width);
-        const py = Math.round((j.target.y / 1000) * screen.height);
+        // 4) 行动：坐标解析（元素表绝对坐标优先 > 截图归一化换算）
+        const absX = Number(j.target.x_abs), absY = Number(j.target.y_abs);
+        const px = (Number.isFinite(absX) && absX > 0) ? Math.round(absX) : Math.round((j.target.x / 1000) * screen.width);
+        const py = (Number.isFinite(absY) && absY > 0) ? Math.round(absY) : Math.round((j.target.y / 1000) * screen.height);
         const act = j.target.action;
         const sameTarget = lastTarget === j.target.name;
         silentTries = sameTarget ? silentTries + 1 : 0;
