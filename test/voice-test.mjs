@@ -251,7 +251,7 @@ const { default: VoiceService, VOICE_CONFIG_KEY, DEFAULT_VOICE_CONFIG } = await 
   const fakeVoice = {
     isASRAvailable: () => true,
     getASRMode: () => 'recognition',
-    startListen: (h) => { calls.push('listen'); fakeVoice._h = h; return true; },
+    startListen: (h) => { calls.push('listen'); fakeVoice._h = h; fakeVoice._listening = true; return true; },
     stopListen: () => { calls.push('stopListen'); fakeVoice._listening = false; },
     abortListen: () => { calls.push('abortListen'); },
     stopSpeak: () => { calls.push('stopSpeak'); },

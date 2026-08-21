@@ -48,7 +48,8 @@ function appleScript(script) {
 function isValidAppName(name) {
   if (typeof name !== 'string') return false;
   const n = name.trim();
-  return n.length >= 1 && n.length <= 100 && /^[A-Za-z0-9 ]+$/.test(n);
+  // 允许中文（\p{Script=Han}）应用名：execFile 参数级隔离不经 shell，中文无注入面
+  return n.length >= 1 && n.length <= 100 && /^[\p{L}\p{N} .\-\u4e00-\u9fff]+$/u.test(n);
 }
 
 // list-dir 路径白名单：仅允许主目录下这4个前缀，防越权读全盘
@@ -166,12 +167,21 @@ const TOOLS = {
     if (!isValidAppName(appName)) {
       throw new Error(`appName 非法（仅允许字母/数字/空格）: ${String(appName).slice(0, 60)}`);
     }
-    return await new Promise((resolve, reject) => {
-      execFile('open', ['-a', String(appName).trim()], { timeout: 15000 }, (err, _so, se) => {
-        if (err) reject(new Error(String(se || err.message).slice(0, 200)));
-        else resolve({ ok: true });
-      });
+    let name = String(appName).trim();
+    // 打开失败 → 模糊匹配：扫 /Applications 与 ~/Applications 找相似名
+    // （解决"酷狗"真名是 KugouMusic、"微信"是 WeChat 这类中英/简称对不上）
+    const tryOpen = (n) => new Promise((resolve) => {
+      execFile('open', ['-a', n], { timeout: 15000 }, (err, _so, se) => resolve(err ? String(se || err.message) : null));
     });
+    let err = await tryOpen(name);
+    if (!err) return { ok: true };
+    const fuzzy = fuzzyFindApp(name);
+    if (fuzzy) {
+      err = await tryOpen(fuzzy);
+      if (!err) return { ok: true, matched: fuzzy };
+      name = fuzzy;
+    }
+    throw new Error(`没找到应用"${appName}"${fuzzy ? `（模糊匹配${name}也失败）` : ''}: ${err.slice(0, 120)}`);
   },
   // list-dir: { dirPath } → 目录列表（最多50项，含类型标记），路径白名单见 resolveAllowedDir
   'list-dir': async ({ dirPath }) => {
@@ -212,6 +222,44 @@ const TOOL_SPECS = [
 ];
 
 // IPC入口
+
+/** 应用名模糊匹配：中英/简称 → macOS 真实应用名
+ * 词典覆盖常见中文名；目录扫描兜底相似度匹配 */
+const APP_ALIAS = {
+  '酷狗': 'KugouMusic', 'kugou': 'KugouMusic', '酷我': 'KuwoMusic', 'kuwo': 'KuwoMusic',
+  '网易云': 'NeteaseMusic', '网易云音乐': 'NeteaseMusic', 'netease': 'NeteaseMusic',
+  'qq音乐': 'QQMusic', 'QQ音乐': 'QQMusic', 'qqmusic': 'QQMusic',
+  '微信': 'WeChat', 'wechat': 'WeChat', 'weixin': 'WeChat',
+  '访达': 'Finder', 'finder': 'Finder', '备忘录': 'Notes', 'notes': 'Notes',
+  '日历': 'Calendar', 'calendar': 'Calendar', '计算器': 'Calculator', 'calculator': 'Calculator',
+  '浏览器': 'Safari', 'safari': 'Safari', '音乐': 'Music', '终端': 'Terminal', 'terminal': 'Terminal',
+  '邮件': 'Mail', '地图': 'Maps', '照片': 'Photos', '设置': 'System Settings',
+};
+function fuzzyFindApp(name) {
+  const n = String(name).trim();
+  // 1) 别名词典
+  const lower = n.toLowerCase();
+  for (const [k, v] of Object.entries(APP_ALIAS)) {
+    if (lower === k.toLowerCase() || lower === v.toLowerCase()) return v;
+  }
+  // 1.5) 别名包含匹配：'酷狗音乐'→含'酷狗'、'网易云音乐'→含'网易云'
+  for (const [k, v] of Object.entries(APP_ALIAS)) {
+    if (k.length >= 2 && lower.includes(k.toLowerCase())) return v;
+  }
+  // 2) 目录扫描：包含匹配（KuGou → KugouMusic）
+  try {
+    const dirs = ['/Applications', require('os').homedir() + '/Applications'];
+    for (const dir of dirs) {
+      const apps = fs.readdirSync(dir).filter(a => a.endsWith('.app'));
+      for (const a of apps) {
+        const base = a.replace(/\.app$/, '');
+        if (base.toLowerCase().includes(lower) || lower.includes(base.toLowerCase().split(' ')[0])) return base;
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
 function initToolsIPC(ipcMain, getLogger) {
   ipcMain.handle('tool-invoke', async (_e, name, args) => {
     const log = getLogger || (() => {});
