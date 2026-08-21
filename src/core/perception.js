@@ -81,6 +81,7 @@ class PerceptionService {
     this._paused = false;           // 隐私暂停（托盘开关）
     this._timer = null;
     this._lastScene = null;
+    this._lastSnapshot = null; // 最近一次感知快照（场景+描述，对话注入用）
     this._lastCheckAt = null;
     this._lastRecordAt = {};        // scene -> 上次记忆记录时间戳
     this._mockIndex = 0;
@@ -304,10 +305,20 @@ class PerceptionService {
           .catch((e) => console.warn('[Perception] 记忆写入失败:', e?.message || e));
       }
     }
+    // 最近快照（供对话注入：主人问"能看到我屏幕吗"时 LLM 有真实现场信息）
+    this._lastSnapshot = { scene, confidence, detail, at: this._now() };
     if (scene !== this._lastScene) {
       this._lastScene = scene;
       if (this.events) this.events.emit('scene:change', { scene, confidence, detail });
     }
+  }
+
+  /** 最近一次屏幕感知快照（5 分钟内有效；过期视为不确定） */
+  getLatestSnapshot() {
+    const snap = this._lastSnapshot;
+    if (!snap) return null;
+    const freshMs = this._now() - snap.at < 5 * 60 * 1000;
+    return freshMs ? snap : { ...snap, stale: true };
   }
 
   // ---------- 内部：全局事件联动 ----------

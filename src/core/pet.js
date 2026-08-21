@@ -836,6 +836,13 @@ class PetController {
       } catch (e) { /* 知识库故障不阻塞对话 */ }
     }
 
+    // 屏幕感知注入：主人当前在干什么（问"你能看到我屏幕吗"时有真话可说）
+    const snap = this.perception?.getLatestSnapshot?.();
+    if (snap && !snap.stale) {
+      const label = { work: '工作', fun: '娱乐', slack: '摸鱼', rest: '休息', late_night: '深夜用电脑' }[snap.scene] || snap.scene;
+      sysLines.push('', `【屏幕感知】你能实时看到主人的屏幕（周期截屏分析）。当前画面：主人正在${label}——${snap.detail}。主人问到屏幕相关话题时，基于此回答，不要说"看不到"。`);
+    }
+
     const ctx = await this.memory.getContext(20);
     // 记忆块：长期+情感（短期走对话流，避免重复）
     const memoryItems = ctx.filter((it) => it.type !== 'short');
