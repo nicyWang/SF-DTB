@@ -194,7 +194,9 @@ function initDoubaoIPC(ipcMain) {
                 asr: { extra: { end_smooth_window_ms: 800 } },
                 dialog: {
                   bot_name: cfg.botName || '毛毛',
-                  system_role: cfg.systemRole || '',
+                  // 工具能力写入人设：豆包知道自己"有手"，收到指令先爽快应答，
+                  // 真正执行由客户端分流完成（它不知道细节，只负责答应和收尾）
+                  system_role: (cfg.systemRole ? cfg.systemRole + '\n' : '') + '你连接着主人电脑，拥有真实执行能力：定时提醒、打开应用、查看/整理文件、截屏等。主人说"打开微信/设个提醒/看看桌面"这类指令时，必须爽快应答（如"好嘞，马上帮你打开微信！"，一句话即可，不要说没功能、不要怀疑），执行结果稍后会自动补充播报。',
                   speaking_style: cfg.speakingStyle || '甜美活泼、口语自然、语句简短',
                   extra: {
                     model: cfg.model || '1.2.1.1',
