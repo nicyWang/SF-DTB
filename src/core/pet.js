@@ -823,14 +823,20 @@ class PetController {
 判定规则：
 - done=true：任务意图已达成（目标面板弹出/状态变化/文字可见）。例："点时间"→面板弹出即完成；"播放歌曲"→正在播放/播放面板出现即完成。
 - 定位规则：元素表里有的目标，直接用表里的绝对坐标（填入x_abs/y_abs），准确无误；表里没有才从截图估归一化坐标。
-严格JSON：{"done":bool, "target":{"name":"元素名","x":0-1000归一化,"y":0-1000,"x_abs":表里的绝对x或-1,"y_abs":表里的绝对y或-1,"action":"click|dblclick|rclick|type|none"}, "type_text":"", "status":"20字内画面状态"}`,
+done 判定必须给证据（防误报）：done=true 时 evidence 必须写明看到了什么（如"播放条显示歌名《xx》且按钮变暂停"/"目标面板已展开且内容可见"）。仅"页面打开了/点过了"不算完成——任务的核心结果必须已发生。
+严格JSON：{"done":bool, "evidence":"done时的可见证据，没有则空", "target":{"name":"元素名","x":0-1000归一化,"y":0-1000,"x_abs":表里的绝对x或-1,"y_abs":表里的绝对y或-1,"action":"click|dblclick|rclick|type|none"}, "type_text":"", "status":"20字内画面状态"}`,
           'image/png');
         const m = String(analysis || '').match(/\{[\s\S]*\}/);
         if (!m) return `第${step}轮看不懂屏幕，放弃了。任务：${task}`;
         const j = JSON.parse(m[0]);
-        // 2) 完成 → 汇报成功
+        // 2) 完成 → 证据校验（防"点开了≠完成了"误报）：无证据的 done 不信，继续干活
         if (j.done) {
-          return step === 1 ? `搞定啦！${j.status}` : `搞定啦（${step}轮）！${j.status}`;
+          const ev = String(j.evidence || '').trim();
+          if (!ev || ev.length < 4) {
+            console.log('[行动回路] done无证据，忽略继续执行');
+          } else {
+            return step === 1 ? `搞定啦！${ev}` : `搞定啦（${step}轮）！${ev}`;
+          }
         }
         console.log(`[行动回路] 第${step}轮 done=false target=(${j.target?.x},${j.target?.y}) status=${j.status}`);
         // 3) 无目标无动作 → 报告卡住
@@ -838,6 +844,17 @@ class PetController {
           if (step >= MAX_STEPS) return `试了${step}轮还是不知道怎么操作：${j.status}`;
           continue; // 再看一眼（屏幕可能在动）
         }
+        // 3.5) 播放类任务专项验证：AX 树查播放控件状态（按钮=暂停→歌在放；=播放→没放）
+        if (j.done && /播放|放.*歌|电台|音乐/.test(task) && axTree) {
+          const playing = /暂停|pause/i.test(axTree);
+          if (!playing) {
+            console.log('[行动回路] 播放任务但控件仍为"播放"→未真正开始，继续');
+            j.done = false;
+            j.target = j.target || {};
+            if (j.target.action === 'none' || !j.target.action) j.target.action = 'click';
+          }
+        }
+
         // 4) 行动：坐标解析（元素表绝对坐标优先 > 截图归一化换算）
         const absX = Number(j.target.x_abs), absY = Number(j.target.y_abs);
         const px = (Number.isFinite(absX) && absX > 0) ? Math.round(absX) : Math.round((j.target.x / 1000) * screen.width);

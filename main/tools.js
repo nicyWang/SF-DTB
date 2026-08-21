@@ -448,6 +448,20 @@ TOOLS['ui-click'] = async ({ name, app }) => {
     });
   } else {
     pid = await frontPid();
+    // 前台若是小球自己（Electron）→ 找最近活跃的其他应用（AX 操控默认目标不该是宠物自身）
+    try {
+      const { execFile: ef } = require('child_process');
+      const isSelf = await new Promise((resolve) => {
+        ef('osascript', ['-e', 'tell application "System Events" to get name of first application process whose frontmost is true'], { timeout: 5000 }, (e, so) => resolve(/Electron/i.test(String(so || ''))));
+      });
+      if (isSelf) {
+        pid = await new Promise((resolve) => {
+          ef('osascript', ['-e', 'tell application "System Events" to get unix id of first application process whose visible is true and name is not "Electron" and frontmost is false and background only is false'], { timeout: 5000 }, () => {});
+          // 简化：取可见应用列表第二个（最近使用序）
+          ef('osascript', ['-e', 'set visApps to name of every application process whose visible is true and name is not "Electron"\nif (count of visApps) > 0 then\n tell application (item 1 of visApps) to activate\n return unix id of first application process whose name is (item 1 of visApps)\nend if'], { timeout: 5000 }, (e2, so2) => resolve(parseInt(String(so2 || '').trim(), 10) || null));
+        });
+      }
+    } catch { /* ignore */ }
   }
   const axArgs = ['axclick', n];
   if (pid) axArgs.push('--pid', String(pid));
@@ -476,7 +490,12 @@ TOOLS['ui-list'] = async ({ filter = '', app }) => {
     await new Promise(r => setTimeout(r, 1200));
   }
   const r = await runAx(['axlist', String(filter).slice(0, 40)]);
-  return String(r).split('\n').slice(0, 60).join('\n') || '（无匹配元素）';
+  const lines = String(r).split('\n');
+  // 播放状态类关键词（暂停/播放/Pause）不受 60 条截断影响——优先保留
+  const keep = lines.filter((l) => /暂停|pause|播放/i.test(l)).slice(0, 5);
+  const head = lines.slice(0, 60);
+  for (const k of keep) if (!head.includes(k)) head.push(k);
+  return head.join('\n') || '（无匹配元素）';
 };
 
 
