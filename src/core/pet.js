@@ -816,16 +816,18 @@ class PetController {
         const img = b64 ? 'data:image/png;base64,' + b64 : null;
         if (!img) return '无法截屏';
         const treeHint = axTree
-          ? `\n\n【当前可交互元素表（系统级精确数据，优先从这里选）】\n${axTree.split('\n').slice(0, 50).join('\n')}\n表格式: 类型|名称|屏幕绝对坐标。选元素时直接用该坐标，比看图猜准。`
+          ? `\n【可交互元素表：索引 角色 名称 状态 @坐标】\n${axTree.split('\n').slice(0, 35).join('\n')}`
           : '';
-        const analysis = await this.llm.vision(img,
+        const visionP = this.llm.vision(img,
           `任务："${task}"。当前屏幕截图（第${step}轮，此前已执行过${step - 1}次点击）。${treeHint}
 判定规则：
 - done=true：任务意图已达成（目标面板弹出/状态变化/文字可见）。例："点时间"→面板弹出即完成；"播放歌曲"→正在播放/播放面板出现即完成。
 - 定位规则：元素表里有的目标，直接用表里的绝对坐标（填入x_abs/y_abs），准确无误；表里没有才从截图估归一化坐标。
 done 判定必须给证据（防误报）：done=true 时 evidence 必须写明看到了什么（如"播放条显示歌名《xx》且按钮变暂停"/"目标面板已展开且内容可见"）。仅"页面打开了/点过了"不算完成——任务的核心结果必须已发生。
-严格JSON：{"done":bool, "evidence":"done时的可见证据，没有则空", "target":{"name":"元素名","x":0-1000归一化,"y":0-1000,"x_abs":表里的绝对x或-1,"y_abs":表里的绝对y或-1,"action":"click|dblclick|rclick|type|none"}, "type_text":"", "status":"20字内画面状态"}`,
+严格JSON：{"done":bool, "evidence":"done时的可见证据，没有则空", "element_index":想点的元素索引号(来自元素表[N]，没有合适则-1), "target":{"name":"元素名","x":0-1000归一化,"y":0-1000,"x_abs":表里的绝对x或-1,"y_abs":表里的绝对y或-1,"action":"click|dblclick|rclick|type|none"}, "type_text":"", "status":"20字内画面状态"}
+（优先用 element_index 点元素——索引由执行器换算真实坐标零误差；元素表没有目标才用x/y估坐标）`,
           'image/png');
+        const analysis = await Promise.race([visionP, new Promise((rj) => setTimeout(() => rj(new Error('vision超时45s')), 45000))]).catch((e) => { throw e; });
         const m = String(analysis || '').match(/\{[\s\S]*\}/);
         if (!m) return `第${step}轮看不懂屏幕，放弃了。任务：${task}`;
         const j = JSON.parse(m[0]);
@@ -855,7 +857,18 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
           }
         }
 
-        // 4) 行动：坐标解析（元素表绝对坐标优先 > 截图归一化换算）
+        // 4) 行动：Codex 式索引优先（执行器自查坐标零误差）> 绝对坐标 > 归一化估算
+        const elIdx = Number(j.element_index);
+        if (Number.isInteger(elIdx) && elIdx >= 0 && (j.target?.action === 'click' || !j.target?.action)) {
+          try {
+            const r = await window.windowAPI.invokeTool('ui-click', { index: elIdx });
+            if (r?.ok === true) {
+              this.bubble.showHint?.(`🖱 点元素[${elIdx}] · 第${step}轮`, 2000);
+              await new Promise((r2) => setTimeout(r2, 1000)); // 等界面响应，下一轮刷新快照验证
+              continue;
+            }
+          } catch (e) { console.warn('[行动回路] 索引点击失败，落坐标:', e?.message); }
+        }
         const absX = Number(j.target.x_abs), absY = Number(j.target.y_abs);
         const px = (Number.isFinite(absX) && absX > 0) ? Math.round(absX) : Math.round((j.target.x / 1000) * screen.width);
         const py = (Number.isFinite(absY) && absY > 0) ? Math.round(absY) : Math.round((j.target.y / 1000) * screen.height);
