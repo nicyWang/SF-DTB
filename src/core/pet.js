@@ -490,13 +490,28 @@ class PetController {
       const ok = await this.doubao.start({
         onUserText: (text, interim) => {
           if (interim) this.bubble.showHint?.(`你说：${text}`);
-          // 意图由豆包判断：最终转写交给豆包，它回复里带 [DO:xxx] 就执行（渲染层只解析标签）
+          // 双保险①：豆包回复带 [DO:] → onReplyText 解析执行（主路径）
+          // 双保险②：豆包没带标签（模型不稳定）但转写明显是操作指令 → 3秒后兜底执行
+          if (!interim && text && !this._toolRouting) {
+            const ACTION = /^(打开|关闭|关掉|点击|点一下|点|启动|帮我.{0,10}(打开|关闭|点击|发|设)|设置?个?提醒|定个?提醒|发(微信|消息)|按(一下)?|输入|截屏|截图)/.test(text.trim());
+            if (ACTION) {
+              clearTimeout(this._doubaoFallbackT);
+              this._doubaoFallbackText = text.trim();
+              this._doubaoFallbackT = setTimeout(() => {
+                if (!this._toolRouting && this._voiceActive) {
+                  console.log('[PetController] DO兜底（豆包未带标签）:', this._doubaoFallbackText);
+                  this._execDoubaoCommand(this._doubaoFallbackText);
+                }
+              }, 3000); // 3秒窗口等豆包自己的 DO 标签，没等到就兜底
+            }
+          }
         },
         onReplyText: (delta) => {
           this.bubble.streamAppend(delta);
           // 豆包意图自判：回复含 [DO:指令] → 剥标签执行（豆包负责判断，渲染层只解析）
           const m = /\[DO[:：]\s*([^\]\n]{2,80})\]/.exec(delta || '');
           if (m && !this._toolRouting && this._voiceActive) {
+            clearTimeout(this._doubaoFallbackT); // 豆包带标签了，取消兜底
             const cmd = m[1].trim();
             console.log('[PetController] 豆包DO标签:', cmd);
             this._execDoubaoCommand(cmd);
