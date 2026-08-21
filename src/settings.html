@@ -308,6 +308,17 @@
   <h2>LLM 服务</h2>
   <div class="card">
     <div class="row">
+      <label for="llm-base">服务商</label>
+      <select id="llm-preset">
+        <option value="">手动填写</option>
+        <option value="doubao">豆包大模型（火山方舟）</option>
+        <option value="zhipu">智谱 GLM</option>
+        <option value="openai">OpenAI</option>
+        <option value="deepseek">DeepSeek</option>
+      </select>
+      <div class="hint" style="font-size:11px">选豆包=全家桶（语音识别/合成/大脑+实时语音全火山）。需在火山方舟控制台创建"推理接入点"，模型填 ep-xxx 或 doubao-1.5-pro-32k，Key 填方舟 API Key。</div>
+    </div>
+    <div class="row">
       <label for="llm-base">Base URL</label>
       <input type="text" id="llm-base" placeholder="https://api.openai.com/v1">
     </div>
@@ -690,6 +701,7 @@
     function fillForm() {
       const llmCfg = loadJSON(KEYS.llm, { baseURL: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o-mini' });
       $('llm-base').value = llmCfg.baseURL || '';
+      $('llm-preset').value = llmCfg._preset || '';
       $('llm-key').value = llmCfg.apiKey || '';
       $('llm-model').value = llmCfg.model || '';
 
@@ -747,6 +759,7 @@
       return {
         llm: {
           baseURL: $('llm-base').value.trim(),
+          _preset: $('llm-preset').value,
           apiKey: $('llm-key').value.trim(),
           model: $('llm-model').value.trim()
         },
@@ -1451,6 +1464,7 @@
   // 厂商预设自动填充
   (function () {
     var PRESETS = {
+      llm: { doubao: ['https://ark.cn-beijing.volces.com/api/v3', 'doubao-1.5-pro-32k'], zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-4-flash'], openai: ['https://api.openai.com/v1', 'gpt-4o-mini'], deepseek: ['https://api.deepseek.com/v1', 'deepseek-chat'] },
       asr: { zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-asr-2512'], volc: ['https://ark.cn-beijing.volces.com/api/v3', ''], openai: ['https://api.openai.com/v1', 'whisper-1'], groq: ['https://api.groq.com/openai/v1', 'whisper-large-v3'] },
       tts: { zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-tts'], volc: ['https://ark.cn-beijing.volces.com/api/v3', ''], openai: ['https://api.openai.com/v1', 'tts-1'] }
     };
@@ -1466,6 +1480,11 @@
       });
     }
     hook('asr-preset', 'asr'); hook('tts-preset', 'tts');
+    var llmSel = document.getElementById('llm-preset');
+    if (llmSel) llmSel.addEventListener('change', function () {
+      var pr = PRESETS.llm[llmSel.value];
+      if (pr) { document.getElementById('llm-base').value = pr[0]; document.getElementById('llm-model').value = pr[1]; }
+    });
   })();
 
   (function () {
