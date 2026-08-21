@@ -610,11 +610,10 @@ class PetController {
           this._toolRouting = false;
           return; // 纯聊天：不介入，豆包自己回复
         }
-        // 工具意图：先让豆包即时应答一句（用户先听到响应）
-        this.doubao?.say?.(`好嘞，${this._ackPhrase(text)}`);
+        // 豆包人设已含工具能力——它自己会爽快应答"好嘞马上打开"（无需我方补话，
+        // 之前补话导致"我没这个功能"+"好嘞帮你打开"双声打架）。此处只等它应答完。
         this._emitVoiceState('speaking');
-        // 等这句播完（估时）
-        await new Promise(r => setTimeout(r, 1600));
+        await new Promise(r => setTimeout(r, 2500));
         if (!this._voiceActive) return;
         // ── 第二段：执行 ──
         this.doubao?.suppressAudio?.();
@@ -661,13 +660,6 @@ class PetController {
     } catch { return false; }
   }
 
-  /** 执行前的口头确认短语（按意图类型给自然的回应） */
-  _ackPhrase(text) {
-    if (/提醒|闹钟/.test(text)) return '我这就给你设个提醒～';
-    if (/打开|启动/.test(text)) return `我帮你打开${(text.match(/打开|启动(.{1,10}?)(应用|$)/) || [])[1] || ''}～`;
-    if (/桌|文件|目录|文件夹/.test(text)) return '我看看啊～';
-    return '我去处理一下～';
-  }
 
   async _processVoiceText(text) {
     if (!text || !this._voiceActive) return;
