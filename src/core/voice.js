@@ -959,6 +959,89 @@ class VoiceService {
   }
 
   /**
+   * 豆包 TTS（火山语音合成大模型 seed-tts-1.0）。凭证：pet-tts-config > pet-asr-config > 豆包配置。
+   * 响应=多个JSON对象连排，"data":"<base64-mp3>" 定界切分拼接 → 主进程 afplay 播放。
+   */
+  async speakDoubao(text, opts = {}) {
+    try {
+      const st = this.storage;
+      const g = (k) => { try { return JSON.parse(st.getItem(k) || '{}'); } catch { return {}; } };
+      const ttsCfg = g('pet-tts-config');
+      const asrCfgV = g('pet-asr-config');
+      const dbCfg = g('pet-doubao-realtime-config');
+      const appId = ttsCfg.appId || asrCfgV.appId || dbCfg.appId;
+      const accessToken = ttsCfg.accessToken || asrCfgV.accessToken || dbCfg.accessToken;
+      if (!appId || !accessToken) return false;
+      const res = await fetch('https://openspeech.bytedance.com/api/v3/tts/unidirectional', {
+        method: 'POST',
+        headers: {
+          'X-Api-App-Key': String(appId),
+          'X-Api-Access-Key': String(accessToken),
+          'X-Api-Resource-Id': 'seed-tts-1.0',
+          'X-Api-Request-Id': (window.crypto && crypto.randomUUID) ? crypto.randomUUID().toUpperCase() : String(Date.now()) + Math.random(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user: { uid: 'pet' },
+          req_params: {
+            text: String(text || '').slice(0, 800),
+            ssml: '',
+            speaker: ttsCfg.speaker || 'zh_female_cancan_mars_bigtts',
+            audio_params: { format: 'mp3', sample_rate: 24000, bit_rate: 128000 },
+          },
+        }),
+      });
+      if (!res.ok) return false;
+      const raw = await res.text();
+      const marker = '"data":"';
+      const chunks = [];
+      let pos = 0;
+      for (;;) {
+        const i = raw.indexOf(marker, pos);
+        if (i < 0) break;
+        const s0 = i + marker.length;
+        const j = raw.indexOf('"', s0);
+        if (j < 0) break;
+        chunks.push(raw.slice(s0, j));
+        pos = j + 1;
+      }
+      if (!chunks.length) return false;
+      const w = this._win();
+      if (typeof w.ttsAPI?.playAudioFile !== 'function') return false;
+      opts.onStart?.();
+      const r = await w.ttsAPI.playAudioFile({ audioBase64: chunks.join(''), format: 'mp3' }).catch(() => null);
+      if (!r || r.ok !== true || r.played !== true) return false;
+      opts.onEnd?.();
+      return true;
+    } catch (e) {
+      console.warn('[VoiceService] speakDoubao:', e?.message);
+      return false;
+    }
+  }
+
+  /** 通用音频 URL 播放（可打断） */
+  _playAudioUrl(url, opts = {}) {
+    return new Promise((resolve) => {
+      const w = this._win();
+      const audio = new w.Audio(url);
+      audio.volume = 0.9;
+      this._edgeAudio = audio; // 复用打断机制
+      this._edgeSpeaking = true;
+      opts.onStart?.();
+      let settled = false;
+      const done = (ok) => { if (!settled) { settled = true; this._edgeSpeaking = false; URL.revokeObjectURL(url); resolve(ok); } };
+      audio.onended = () => done(true);
+      audio.onerror = () => done(false);
+      // 被打断（stopEdgeSpeak pause）→ ended 不触发，轮询检测
+      const iv = setInterval(() => {
+        if (!this._edgeSpeaking || audio.paused) { clearInterval(iv); if (!settled) done(false); }
+      }, 200);
+      setTimeout(() => { clearInterval(iv); }, 60000);
+      audio.play().catch(() => done(false));
+    });
+  }
+
+  /**
    * 云端 TTS：POST {baseURL}/audio/speech → wav 二进制 → <audio> 播放
    * @param {string} text（>1024 字自动截断，智谱限制）
    * @param {object} [opts] {voice='tongtong', speed, onStart, onEnd}

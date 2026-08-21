@@ -975,6 +975,13 @@ class PetController {
     }
     let outcome = 'none';
     try {
+      // 0) 豆包 TTS（火山语音合成大模型·灿灿甜美女声——与极速模式同源豆包嗓，体验统一）
+      if (outcome === 'none' && typeof this.voice.speakDoubao === 'function') {
+        try {
+          const r = await this.voice.speakDoubao(reply, { onStart: startLip });
+          if (r) outcome = 'full';
+        } catch (e) { console.warn('[PetController] 豆包TTS失败，降级:', e?.message); }
+      }
       // 1) Edge TTS（微软神经网络，甜美真人音色，免费）
       if (outcome === 'none' && typeof this.voice.speakEdge === 'function') {
         const r = await this.voice.speakEdge(reply, { onStart: startLip });
