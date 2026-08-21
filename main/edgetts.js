@@ -168,6 +168,37 @@ function initEdgeTTSIPC(ipcMain) {
     }
   });
 
+  // 通用音频播放（豆包TTS等已有音频数据用）：audioBase64(mp3/wav) → 临时文件 → afplay
+  // 渲染进程 <audio> 解码不稳（Electron chromium mp3 兼容问题）→ 主进程播放最稳
+  ipcMain.handle('audio-file-play', async (_e, payload = {}) => {
+    try {
+      const b64 = String(payload.audioBase64 || '');
+      if (!b64) return { ok: false, error: '空音频' };
+      const ext = payload.format === 'wav' ? 'wav' : 'mp3';
+      const file = path.join(TMP_DIR, `pet-audio-${Date.now()}.${ext}`);
+      fs.writeFileSync(file, Buffer.from(b64, 'base64'));
+      const played = await new Promise((resolve) => {
+        const { spawn } = require('child_process');
+        const proc = spawn('afplay', [file], { stdio: 'ignore' });
+        playingProc = proc;
+        let settled = false;
+        const done = (interrupted) => {
+          if (settled) return;
+          settled = true;
+          if (playingProc === proc) playingProc = null;
+          try { fs.unlinkSync(file); } catch { /* ignore */ }
+          resolve({ full: !interrupted, interrupted: !!interrupted });
+        };
+        proc.on('exit', (code, signal) => done(signal === 'SIGTERM' || signal === 'SIGKILL'));
+        proc.on('error', () => done(false));
+        setTimeout(() => { try { proc.kill('SIGTERM'); } catch { /* ignore */ } }, 60000).unref?.();
+      });
+      return { ok: true, played: true, interrupted: played.interrupted };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message || err).slice(0, 200) };
+    }
+  });
+
   // 停止当前 afplay 播放（语音打断用）
   ipcMain.handle('edge-tts-stop', async () => {
     const proc = playingProc;

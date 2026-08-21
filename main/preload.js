@@ -190,6 +190,10 @@ contextBridge.exposeInMainWorld('ttsAPI', {
   async play(payload) {
     return await ipcRenderer.invoke('edge-tts-play', payload || {});
   },
+  // 通用音频播放（豆包TTS）：audioBase64 → 主进程 afplay
+  async playAudioFile(payload) {
+    return await ipcRenderer.invoke('audio-file-play', payload || {});
+  },
   // 停止当前播放（语音打断：用户插嘴 → 立即闭嘴）
   async stop() {
     return await ipcRenderer.invoke('edge-tts-stop');
