@@ -21,6 +21,7 @@ const EV_FINISH_CONNECTION = 2;
 const EV_START_SESSION = 100;
 const EV_FINISH_SESSION = 102;
 const EV_TASK_REQUEST = 200;
+const EV_CHAT_TTS_TEXT = 300; // ChatTTSText：客户端推文本让豆包直接TTS播报（工具结果用）
 
 /** 通用帧编码：header + [event] + [session] + gzip(payload) */
 function encodeFrame({ msgType, event, sessionId = null, payload = null, gzip = true, rawAudio = null }) {
@@ -261,6 +262,18 @@ function initDoubaoIPC(ipcMain) {
       });
     });
     return connecting; // ← 关键：handler 必须返回 promise（IPC invoke 的返回值）
+  });
+
+  // 豆包代播文本（工具结果）：ChatTTSText {content, start, end} —— 豆包音色直接合成，
+  // 不进对话模型。用户视角：所有回答都是"豆包"说的（门面统一）
+  ipcMain.on('doubao-say', (_e, text) => {
+    if (!ws || ws.readyState !== 1 || !sessionId) return;
+    try {
+      ws.send(encodeFrame({
+        msgType: MT_FULL_CLIENT_REQ, event: EV_CHAT_TTS_TEXT, sessionId,
+        payload: { content: String(text || '').slice(0, 300), start: true, end: true },
+      }));
+    } catch { /* ignore */ }
   });
 
   // 渲染进程推麦克风 PCM16k（raw 不压缩）
