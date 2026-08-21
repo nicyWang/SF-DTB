@@ -291,6 +291,40 @@ const TOOLS = {
     if (!validCoord(x) || !validCoord(y)) throw new Error('x/y 需为 0-10000 的数字');
     return await appleScript(`tell application "System Events" to click at {${Math.round(x)}, ${Math.round(y)}}`);
   },
+  // wechat-send: { contact, message } → 微信发消息（macOS：AppleScript UI 自动化）
+  // 流程：打开微信 → 搜索联系人 → 进聊天 → 输入框打字 → 回车发送
+  'wechat-send': async ({ contact, message }) => {
+    const c = String(contact || '').trim().slice(0, 50);
+    const m = String(message || '').trim().slice(0, 1000);
+    if (!c) throw new Error('contact（联系人名）不能为空');
+    if (!m) throw new Error('message（消息内容）不能为空');
+    if (IS_WIN) throw new Error('Windows 微信自动化暂未支持（开发中），请先在手机或手动发送');
+    const escC = c.replace(/"/g, '\\"');
+    const escM = m.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    // 原理：微信 macOS 版支持 System Events 键盘操控（搜索框 ⌘F → 输入名 → 回车进会话 → 打字 → 回车）
+    const script = `
+tell application "WeChat" to activate
+delay 1.2
+tell application "System Events"
+  tell process "WeChat"
+    -- ⌘F 聚焦搜索
+    keystroke "f" using command down
+    delay 0.5
+    keystroke "${escC}"
+    delay 1.5
+    key code 36 -- 回车：进第一个搜索结果会话
+    delay 0.8
+    -- 输入消息并发送
+    keystroke "${escM}"
+    delay 0.2
+    key code 36 -- 回车发送
+  end tell
+end tell
+return "已发送"`;
+    const r = await appleScript(script);
+    if (String(r).startsWith('执行失败')) throw new Error(`微信发送失败: ${r}（需辅助功能权限，且微信需为登录状态）`);
+    return `已通过微信发送给「${c}」: ${m}`;
+  },
 };
 
 // GLM/OpenAI function-calling 工具定义（给LLM看的说明书）
@@ -311,6 +345,7 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'cancel-reminder', description: '取消一个已设置的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } } }, required: ['id'] } },
   { type: 'function', function: { name: 'type-text', description: '在屏幕指定坐标点击后键盘输入文本（macOS Accessibility）。用于"在输入框里输入xx"类指令；x/y 可选（不给则在当前焦点处输入）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要输入的文本' }, x: { type: 'number', description: '目标输入框屏幕X坐标（视觉分析提供）' }, y: { type: 'number', description: '目标输入框屏幕Y坐标' } }, required: ['text'] } } },
   { type: 'function', function: { name: 'click-at', description: '点击屏幕坐标（配合屏幕分析的目标位置执行点击，如关弹窗/按按钮）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'wechat-send', description: '通过微信给指定联系人发消息（自动打开微信→搜索联系人→输入并发送）。要求：微信已在 Mac 登录。发送前必须先向主人复述联系人和消息内容获确认', parameters: { type: 'object', properties: { contact: { type: 'string', description: '联系人备注名或昵称（需与微信通讯录一致）' }, message: { type: 'string', description: '消息内容' } }, required: ['contact', 'message'] } } },
 ];
 
 // IPC入口

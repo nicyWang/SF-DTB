@@ -112,6 +112,7 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'list-dir', description: '列出目录内容（安全版：仅限 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy，最多50项）', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '如 ~/Desktop' } }, required: ['dirPath'] } } },
   { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒：N分钟后提醒主人某事（到点会弹出通知）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数(1-720)' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },
   { type: 'function', function: { name: 'cancel-reminder', description: '取消一个未触发的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'wechat-send', description: '通过微信给指定联系人发消息（自动开微信→搜索→输入→发送）。需微信已在Mac登录。调用前必须先向用户复述联系人与内容获得确认', parameters: { type: 'object', properties: { contact: { type: 'string', description: '联系人备注名/昵称' }, message: { type: 'string', description: '消息内容' } }, required: ['contact', 'message'] } } },
 ];
 
 class PetController {
@@ -369,6 +370,7 @@ class PetController {
                 shell: '执行命令', screenshot: '截屏', system_info: '看系统信息',
                 'open-app': `打开 ${args?.appName || '应用'}`, 'list-dir': '看看目录',
                 'set-reminder': '定提醒', 'cancel-reminder': '取消提醒',
+                'wechat-send': `给 ${args?.contact || '联系人'} 发微信`,
               };
               this.bubble.showHint(`🔧 ${labels[name] || name}中…`);
             });
@@ -700,7 +702,7 @@ class PetController {
     try {
       const r = await Promise.race([
         this.llm.chat([
-          { role: 'system', content: '判断这句话是否是让助手在本机执行操作的指令（需调用工具）。判定规则：①"打开/启动/开一下/我要用 + 应用"→yes ②"提醒/闹钟/叫我/X分钟后"→yes ③"看看/列出/整理 + 桌面/文件夹/文件"→yes ④"截屏/截图"→yes ⑤涉及屏幕内容："屏幕上/画面上/那个窗口/弹窗/按钮/关掉/点一下/右上角/左下角/帮我处理"→yes ⑤b "输入/打字/填上/写上 + 内容"→yes（键盘输入工具） ⑥问"能看到我屏幕吗"→yes ⑦纯聊天/讲笑话/问天气→no。只回答yes或no。' },
+          { role: 'system', content: '判断这句话是否是让助手在本机执行操作的指令（需调用工具）。判定规则：①"打开/启动/开一下/我要用 + 应用"→yes ②"提醒/闹钟/叫我/X分钟后"→yes ③"看看/列出/整理 + 桌面/文件夹/文件"→yes ④"截屏/截图"→yes ⑤涉及屏幕内容："屏幕上/画面上/那个窗口/弹窗/按钮/关掉/点一下/右上角/左下角/帮我处理"→yes ⑤b "输入/打字/填上/写上 + 内容"→yes ⑤c "发微信/给XX发消息/发条消息/发给他/发给她"→yes ⑤b "输入/打字/填上/写上 + 内容"→yes（键盘输入工具） ⑥问"能看到我屏幕吗"→yes ⑦纯聊天/讲笑话/问天气→no。只回答yes或no。' },
           { role: 'user', content: text },
         ]),
         new Promise(res => setTimeout(() => res('no'), 10000)),
@@ -713,6 +715,7 @@ class PetController {
       if (!ans) {
         const SCREEN_RE = /(屏幕|画面|截图|截屏|窗口|弹窗|按钮).{0,20}(哪个|哪里|什么|位置|看到|帮我|处理|关掉|点击|点一下)|帮我(关闭|点击|处理)|能看到.{0,8}(屏幕|我)/i;
         ans = SCREEN_RE.test(text);
+      if (!ans) ans = /(发|发送|回).{0,6}(微信|消息)|(给|帮).{1,12}(发|送)(个|条|下)?.{0,4}(微信|消息|信息)/i.test(text);
       }
       }
       console.log('[PetController] 工具意图判断:', ans ? 'TOOL' : 'chat', '←', text.slice(0, 20));
