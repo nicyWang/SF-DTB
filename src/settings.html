@@ -558,6 +558,8 @@
     <div class="row"><label for="asr-base">ASR 接口地址</label><input type="text" id="asr-base" placeholder="https://open.bigmodel.cn/api/paas/v4"></div>
     <div class="row"><label for="asr-key">ASR API Key</label><input type="password" id="asr-key"></div>
     <div class="row"><label for="asr-model">ASR 模型</label><input type="text" id="asr-model" placeholder="glm-asr-2512"></div>
+    <div class="row"><label for="asr-appid">火山 AppID</label><input type="text" id="asr-appid" placeholder="选火山预设后填（豆包同款AppID）"></div>
+    <div class="row"><label for="asr-token">火山 Access Token</label><input type="password" id="asr-token" placeholder="豆包同款AccessToken"></div>
     <div class="row">
       <label for="tts-preset">语音合成 TTS</label>
       <select id="tts-preset">
@@ -720,7 +722,7 @@
       $('db-voice').value = dbc.voice || 'zh_female_xiaohe_jupiter_bigtts';
       $('voice-engine').value = localStorage.getItem('pet-voice-engine') || 'self';
       const asrC = loadJSON('pet-asr-config', {});
-      $('asr-base').value = asrC.baseURL || ''; $('asr-key').value = asrC.apiKey || ''; $('asr-model').value = asrC.model || '';
+      $('asr-base').value = asrC.baseURL || ''; $('asr-key').value = asrC.apiKey || ''; $('asr-model').value = asrC.model || ''; $('asr-appid').value = asrC.appId || ''; $('asr-token').value = asrC.accessToken || '';
       $('asr-preset').value = asrC._preset || '';
       const ttsC = loadJSON('pet-tts-config', {});
       $('tts-base').value = ttsC.baseURL || ''; $('tts-key').value = ttsC.apiKey || ''; $('tts-model').value = ttsC.model || '';
@@ -789,7 +791,7 @@
       localStorage.setItem(KEYS.danmaku, JSON.stringify(cfg.danmaku));
       localStorage.setItem(KEYS.voice, JSON.stringify(cfg.voice));
       localStorage.setItem('pet-voice-engine', $('voice-engine').value);
-      localStorage.setItem('pet-asr-config', JSON.stringify({ baseURL: $('asr-base').value.trim(), apiKey: $('asr-key').value.trim(), model: $('asr-model').value.trim(), _preset: $('asr-preset').value }));
+      localStorage.setItem('pet-asr-config', JSON.stringify({ provider: $('asr-preset').value === 'volc' ? 'volc' : '', baseURL: $('asr-base').value.trim(), apiKey: $('asr-key').value.trim(), model: $('asr-model').value.trim(), appId: $('asr-appid').value.trim(), accessToken: $('asr-token').value.trim(), _preset: $('asr-preset').value }));
       localStorage.setItem('pet-tts-config', JSON.stringify({ baseURL: $('tts-base').value.trim(), apiKey: $('tts-key').value.trim(), model: $('tts-model').value.trim(), _preset: $('tts-preset').value }));
       localStorage.setItem('pet-doubao-realtime-config', JSON.stringify(cfg.doubao));
       localStorage.setItem('pet-avatar-config', JSON.stringify(cfg.avatar));

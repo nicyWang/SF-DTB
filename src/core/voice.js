@@ -493,8 +493,9 @@ class VoiceService {
     const volcDirect = asrCfg0.provider === 'volc'
       || (asrCfg0.appId && asrCfg0.accessToken && !asrCfg0.baseURL);
     if (volcDirect) {
-      const appId = asrCfg0.appId || readJSON(this.storage, 'pet-doubao-realtime-config', {}).appId;
-      const accessToken = asrCfg0.accessToken || readJSON(this.storage, 'pet-doubao-realtime-config', {}).accessToken;
+      const dbCfg = readJSON(this.storage, 'pet-doubao-realtime-config', {});
+      const appId = asrCfg0.appId || dbCfg.appId;
+      const accessToken = asrCfg0.accessToken || dbCfg.accessToken;
       if (appId && accessToken) return await this._transcribeVolc(blob, appId, accessToken);
     }
     const cfg = (asrCfg0.baseURL && asrCfg0.apiKey) ? asrCfg0 : llmCfg0;
@@ -511,7 +512,7 @@ class VoiceService {
       console.warn('[VoiceService] WAV 重编码失败，按原始格式上传:', e);
     }
 
-    const model = asrCfg.model || cfg.sttModel || 'glm-asr-2512';
+    const model = asrCfg0.model || cfg.sttModel || 'glm-asr-2512';
     const fd = new FormData();
     fd.append('file', payload, filename);
     fd.append('model', model);
