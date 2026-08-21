@@ -43,6 +43,79 @@ function appleScript(script) {
   });
 }
 
+// ---------- Agent工具（连字符版）安全校验 ----------
+// open-app 应用名白名单：仅字母/数字/空格，防shell注入（配合execFile免shell更稳）
+function isValidAppName(name) {
+  if (typeof name !== 'string') return false;
+  const n = name.trim();
+  return n.length >= 1 && n.length <= 100 && /^[A-Za-z0-9 ]+$/.test(n);
+}
+
+// list-dir 路径白名单：仅允许主目录下这4个前缀，防越权读全盘
+const LIST_DIR_ROOTS = ['Desktop', 'Documents', 'Downloads', 'WorkBuddy']
+  .map(d => path.join(HOME, d));
+
+function resolveAllowedDir(p) {
+  let raw = String(p || '');
+  if (raw === '~') raw = HOME;
+  else if (raw.startsWith('~/')) raw = path.join(HOME, raw.slice(2)); // 支持 ~/Desktop 写法
+  else if (raw.startsWith('~')) throw new Error(`不支持的路径写法（仅 ~ 或 ~/xxx）: ${raw}`);
+  const abs = path.resolve(raw);
+  const hit = LIST_DIR_ROOTS.some(root => abs === root || abs.startsWith(root + path.sep));
+  if (!hit) {
+    throw new Error(`路径越界（仅允许 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy）: ${abs}`);
+  }
+  return abs;
+}
+
+// ---------- reminder 句柄管理（内存级定时器，可取消） ----------
+function createReminderManager(sendFn) {
+  const timers = new Map(); // id -> Timeout
+  let seq = 0;
+  const fire = (id, text) => {
+    timers.delete(id); // 触发即出表
+    try { (sendFn || (() => {}))(text, id); } catch { /* 通知失败不致命 */ }
+  };
+  return {
+    // minutes: 分钟数（>0，≤30天防setTimeout溢出）；text: 提醒文案 → 返回可取消的id
+    set(minutes, text) {
+      const m = Number(minutes);
+      if (!Number.isFinite(m) || m <= 0 || m > 30 * 24 * 60) {
+        throw new Error(`minutes 非法（需 0 < minutes ≤ 43200）: ${minutes}`);
+      }
+      const t = String(text || '').trim().slice(0, 500);
+      if (!t) throw new Error('text 不能为空');
+      const id = `r${++seq}_${Date.now().toString(36)}`;
+      const timer = setTimeout(() => fire(id, t), Math.round(m * 60 * 1000));
+      timers.set(id, timer);
+      return id;
+    },
+    cancel(id) {
+      const timer = timers.get(id);
+      if (!timer) return false;
+      clearTimeout(timer);
+      timers.delete(id);
+      return true;
+    },
+    cancelAll() {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    },
+    has: (id) => timers.has(id),
+    get size() { return timers.size; },
+  };
+}
+
+// 默认通知通道：到点经主窗口 webContents 广播 'agent-reminder'
+function sendReminderToRenderer(text, id) {
+  try {
+    const { BrowserWindow } = require('electron'); // 延迟require：纯node单测下不炸
+    const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
+    if (win) win.webContents.send('agent-reminder', { text, id });
+  } catch { /* 非Electron环境（单测）静默 */ }
+}
+const reminderManager = createReminderManager(sendReminderToRenderer);
+
 // ---------- 工具注册表 ----------
 const TOOLS = {
   list_dir: async ({ dir = HOME }) => {
@@ -86,6 +159,38 @@ const TOOLS = {
   system_info: async () => {
     return `用户: ${os.userInfo().username}\n系统: ${os.type()} ${os.release()}\n内存: ${Math.round(os.totalmem() / 1e9)}GB 可用${Math.round(os.freemem() / 1e9)}GB\n时间: ${new Date().toLocaleString('zh-CN')}`;
   },
+
+  // ---------- Agent工具（连字符版，独立IPC级校验） ----------
+  // open-app: { appName } → macOS open -a（execFile不经shell，参数级隔离）
+  'open-app': async ({ appName }) => {
+    if (!isValidAppName(appName)) {
+      throw new Error(`appName 非法（仅允许字母/数字/空格）: ${String(appName).slice(0, 60)}`);
+    }
+    return await new Promise((resolve, reject) => {
+      execFile('open', ['-a', String(appName).trim()], { timeout: 15000 }, (err, _so, se) => {
+        if (err) reject(new Error(String(se || err.message).slice(0, 200)));
+        else resolve({ ok: true });
+      });
+    });
+  },
+  // list-dir: { dirPath } → 目录列表（最多50项，含类型标记），路径白名单见 resolveAllowedDir
+  'list-dir': async ({ dirPath }) => {
+    const abs = resolveAllowedDir(dirPath);
+    const items = fs.readdirSync(abs, { withFileTypes: true }).slice(0, 50);
+    const list = items.map(i => ({ name: i.name, type: i.isDirectory() ? 'dir' : i.isSymbolicLink() ? 'link' : 'file' }));
+    return { dir: abs, count: list.length, truncated: items.length === 50, items: list };
+  },
+  // set-reminder: { minutes, text } → 内存定时器，到点 webContents.send('agent-reminder',{text})
+  'set-reminder': async ({ minutes, text }) => {
+    const id = reminderManager.set(minutes, text);
+    return { ok: true, id, message: `已设置 ${minutes} 分钟后提醒：${String(text).slice(0, 50)}` };
+  },
+  // cancel-reminder: { id } → 取消指定提醒（set-reminder句柄的配套）
+  'cancel-reminder': async ({ id }) => {
+    const ok = reminderManager.cancel(String(id || ''));
+    if (!ok) throw new Error(`提醒不存在或已触发: ${id}`);
+    return { ok: true, message: `已取消提醒 ${id}` };
+  },
 };
 
 // GLM/OpenAI function-calling 工具定义（给LLM看的说明书）
@@ -100,6 +205,10 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'shell', description: '执行白名单shell命令（ls/cat/mkdir/cp/mv/open/say等）', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } } },
   { type: 'function', function: { name: 'screenshot', description: '截取全屏保存到/tmp（需要屏幕录制权限）', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'system_info', description: '获取系统信息（用户/内存/时间）', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'open-app', description: '打开macOS应用（如 Safari、WeChat），仅允许字母数字空格名称', parameters: { type: 'object', properties: { appName: { type: 'string', description: '应用名，如 "Safari"' } }, required: ['appName'] } } },
+  { type: 'function', function: { name: 'list-dir', description: '列目录（最多50项含类型），仅允许 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '目录路径，如 "~/Desktop"' } }, required: ['dirPath'] } } },
+  { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒（到点弹给主人）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数（0<x≤43200）' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },
+  { type: 'function', function: { name: 'cancel-reminder', description: '取消一个已设置的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } }, required: ['id'] } } },
 ];
 
 // IPC入口
@@ -120,4 +229,4 @@ function initToolsIPC(ipcMain, getLogger) {
   });
 }
 
-module.exports = { initToolsIPC, TOOL_SPECS };
+module.exports = { initToolsIPC, TOOL_SPECS, isValidAppName, resolveAllowedDir, createReminderManager };
