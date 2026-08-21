@@ -428,6 +428,17 @@ class PetController {
       this.bubble.showHint?.('当前环境不支持语音，双击我用文字聊天吧～');
       return;
     }
+    // 僵尸态自愈：_voiceActive 残留 true 但实际没有任何会话在跑（工具分流异常路径
+    // 可能残留）→ 清标志继续开新会话，而不是把用户的"打开"误判成"挂断"
+    const zombieVoice = this._voiceActive
+      && !(this.doubao?.active)
+      && !(this.voice?.getVoiceLoopActive?.())
+      && !(this.voice?.getListening?.())
+      && !this._speakingVoice && !this._chatting;
+    if (zombieVoice) {
+      console.warn('[PetController] 检测到语音僵尸态，自动复位');
+      this._voiceActive = false;
+    }
     if (this._voiceActive) {
       this.stopVoiceChat();
       return;
@@ -634,6 +645,7 @@ class PetController {
       } finally {
         this._toolRouting = false;
         this.doubao?.resumeAudio?.();
+        this._micMutedGuard?.();
         if (this._voiceActive && this.doubao?.active) this._emitVoiceState('listening');
       }
     })();
