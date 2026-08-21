@@ -10,7 +10,11 @@ const HOME = os.homedir();
 
 // ---------- 安全校验 ----------
 function safePath(p) {
-  const abs = path.resolve(String(p || ''));
+  // ~ 展开在 resolve 之前（否则 "~/Desktop" 被当相对路径拼到 cwd）
+  let raw = String(p || '').trim();
+  if (raw === '~') raw = HOME;
+  else if (raw.startsWith('~/')) raw = path.join(HOME, raw.slice(2));
+  const abs = path.resolve(raw);
   const allowed = [HOME, '/tmp', '/Applications'];
   if (!allowed.some(root => abs === root || abs.startsWith(root + path.sep))) {
     throw new Error(`路径越界（仅允许用户目录/tmp）: ${abs}`);
@@ -287,6 +291,99 @@ const TOOLS = {
   },
   // wechat-send: { contact, message } → 微信发消息（macOS：AppleScript UI 自动化）
   // 流程：打开微信 → 搜索联系人 → 进聊天 → 输入框打字 → 回车发送
+  // ══ Skill 批次：剪贴板/网页阅读/文档转换/图片处理 ══
+
+  // clipboard-read: 读剪贴板（文本）——"翻译我刚复制的"
+  'clipboard-read': async () => {
+    return await new Promise((resolve, reject) => {
+      execFile('pbpaste', [], { timeout: 5000, maxBuffer: 1024 * 512 }, (e, so) => {
+        if (e) return reject(new Error('读剪贴板失败: ' + e.message));
+        const t = String(so || '').trim();
+        if (!t) return reject(new Error('剪贴板是空的或不是文本'));
+        resolve(t.slice(0, 5000));
+      });
+    });
+  },
+  // clipboard-write: 写剪贴板——"把XX复制到剪贴板"
+  'clipboard-write': async ({ text }) => {
+    const t = String(text || '');
+    if (!t) throw new Error('text 不能为空');
+    const { spawn } = require('child_process');
+    await new Promise((resolve, reject) => {
+      const p2 = spawn('pbcopy', []);
+      p2.stdin.end(t);
+      p2.on('close', (c) => (c === 0 ? resolve() : reject(new Error('写剪贴板失败'))));
+    });
+    return '已复制 ' + t.length + ' 字到剪贴板';
+  },
+
+  // web-read: 抓网页正文（去广告去导航，提取可读文本）——"帮我看看这个网页说了什么"
+  'web-read': async ({ url }) => {
+    const u = String(url || '').trim();
+    if (!/^https?:\/\//.test(u)) throw new Error('仅支持 http/https 链接');
+    return await new Promise((resolve, reject) => {
+      execFile('curl', ['-sL', '-m', '20', '--max-filesize', '5242880', '-A', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', u], { timeout: 25000, maxBuffer: 1024 * 1024 * 8 }, (e, so) => {
+        if (e) return reject(new Error('抓取失败: ' + e.message));
+        let html = String(so || '');
+        if (!html) return reject(new Error('页面为空'));
+        // 简易 readability：去 script/style/nav → 提取正文标签文本
+        html = html.replace(/[\s\S]*?<\/script>/gi, '').replace(/[\s\S]*?<\/style>/gi, '')
+          .replace(/<[\s\S]*?>/gi, '\n')
+          .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+          .split('\n').map((l) => l.trim()).filter((l) => l.length > 1);
+        // 找正文：连续长文本段（启发式）
+        const paras = html.filter((l) => l.length > 20 && !/^(cookie|登录|注册|广告|copyright|all rights)/i.test(l));
+        const body = paras.slice(0, 60).join('\n');
+        const titleM = String(so).match(/<title[^>]*>([^<]+)<\/title>/i);
+        resolve((titleM ? '【' + titleM[1].trim() + '】\n' : '') + (body || html.slice(0, 40).join('\n')).slice(0, 6000));
+      });
+    });
+  },
+
+  // doc-convert: 文档格式转换（LibreOffice）——"把这个PDF转成Word"
+  'doc-convert': async ({ src, to }) => {
+    const a = safePath(src);
+    const fmtMap = { pdf: 'pdf:writer_pdf_Export', docx: 'docx:MS Word 2007 XML', doc: 'doc:MS Word 97', xlsx: 'xlsx:Calc MS Excel 2007 XML', csv: 'csv:Text - txt - csv (StarCalc)', txt: 'txt:Text (encoded):UTF8', html: 'html:HTML (StarWriter)', pptx: 'pptx:Impress MS PowerPoint 2007 XML' };
+    const toFmt = String(to || '').toLowerCase().trim();
+    if (!fmtMap[toFmt]) throw new Error('支持转: ' + Object.keys(fmtMap).join('/'));
+    const outDir = require('path').dirname(a);
+    const soffice = '/Applications/LibreOffice.app/Contents/MacOS/soffice';
+    return await new Promise((resolve, reject) => {
+      execFile(soffice, ['--headless', '--convert-to', fmtMap[toFmt], '--outdir', outDir, a], { timeout: 60000 }, (e, _so, se) => {
+        if (e) return reject(new Error('转换失败（需已装LibreOffice）: ' + String(se || e.message).slice(0, 100)));
+        const base = require('path').basename(a).replace(/\.[^.]+$/, '') + '.' + toFmt;
+        resolve('已转换: ' + require('path').join(outDir, base));
+      });
+    });
+  },
+
+  // image-process: 图片处理（macOS自带sips）——"这图压缩下/改小点/转成jpg"
+  'image-process': async ({ src, op, width, quality, to }) => {
+    const a = safePath(src);
+    if (!/\.(png|jpe?g|gif|webp|tiff?|bmp|heic)$/i.test(a)) throw new Error('不认识的图片格式');
+    const args = [];
+    const ops = String(op || 'resize').toLowerCase();
+    if (ops.includes('resize') || ops.includes('缩放') || width) {
+      const w = Number(width) || 800;
+      args.push('--resampleWidth', String(w));
+    }
+    if (quality) args.push('-s', 'formatOptions', String(Math.max(1, Math.min(100, Number(quality) || 80))));
+    let out = a;
+    if (to) {
+      const t2 = String(to).toLowerCase().replace('.', '');
+      if (!['jpeg', 'png', 'gif', 'tiff', 'bmp', 'heic', 'webp'].includes(t2)) throw new Error('支持: jpeg/png/gif/tiff/webp');
+      out = a.replace(/\.[^.]+$/, '') + '.' + (t2 === 'jpg' ? 'jpeg' : t2);
+      args.push('-s', 'format', t2 === 'jpg' ? 'jpeg' : t2);
+    }
+    args.push('--out', out, a);
+    return await new Promise((resolve, reject) => {
+      execFile('sips', args, { timeout: 20000 }, (e, _so, se) => {
+        if (e) return reject(new Error('图片处理失败: ' + String(se || e.message).slice(0, 100)));
+        resolve('已处理: ' + out);
+      });
+    });
+  },
+
   // ══ 任务级工具（一句话直达，内部自己编排多步） ══
   'tidy-desktop': async ({ dryRun }) => {
     const pathMod = require('path');
@@ -625,6 +722,12 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'cancel-reminder', description: '取消一个已设置的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } } }, required: ['id'] } },
   { type: 'function', function: { name: 'type-text', description: '在屏幕指定坐标点击后键盘输入文本（macOS Accessibility）。用于"在输入框里输入xx"类指令；x/y 可选（不给则在当前焦点处输入）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要输入的文本' }, x: { type: 'number', description: '目标输入框屏幕X坐标（视觉分析提供）' }, y: { type: 'number', description: '目标输入框屏幕Y坐标' } }, required: ['text'] } } },
   { type: 'function', function: { name: 'click-at', description: '点击屏幕坐标（默认静默：光标不动不抢鼠标；silent:false 则真移动光标）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+
+  { type: 'function', function: { name: 'clipboard-read', description: '读取剪贴板文本内容（如"我刚复制的内容"）', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'clipboard-write', description: '把文本写入剪贴板（复制）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要复制的文本' } }, required: ['text'] } } },
+  { type: 'function', function: { name: 'web-read', description: '抓取网页并提取正文（去广告）。配合web-search：先搜后读，"帮我查XX并总结"用 web-search+web-read 组合', parameters: { type: 'object', properties: { url: { type: 'string', description: '网页链接' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'doc-convert', description: '文档格式转换：pdf/docx/xlsx/csv/txt/html/pptx 互转（如"PDF转Word"）', parameters: { type: 'object', properties: { src: { type: 'string', description: '文件路径' }, to: { type: 'string', description: '目标格式：pdf/docx/xlsx/csv/txt/html/pptx' } }, required: ['src', 'to'] } } },
+  { type: 'function', function: { name: 'image-process', description: '图片处理：缩放/压缩/转格式（macOS原生，如"这图改小点""转成jpg"）', parameters: { type: 'object', properties: { src: { type: 'string', description: '图片路径' }, op: { type: 'string', description: 'resize/compress' }, width: { type: 'number', description: '目标宽度像素，默认800' }, quality: { type: 'number', description: '质量1-100' }, to: { type: 'string', description: '转格式：jpeg/png/webp等' } }, required: ['src'] } } },
   { type: 'function', function: { name: 'tidy-desktop', description: '整理桌面：自动按类型分类（图片/文档/安装包/视频/音频移入对应文件夹）。dryRun=true 先预览不移动', parameters: { type: 'object', properties: { dryRun: { type: 'boolean', description: 'true=只预览不实际移动' } }, required: [] } } },
   { type: 'function', function: { name: 'close-app', description: '关闭应用（先温和退出，关不掉自动强制）', parameters: { type: 'object', properties: { name: { type: 'string', description: '应用名：微信/酷狗/网易云/备忘录/浏览器/Chrome/计算器/日历等' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'web-search', description: '浏览器搜索：自动打开浏览器查资料（默认百度，可选bing/google）', parameters: { type: 'object', properties: { query: { type: 'string' }, engine: { type: 'string', description: 'baidu/bing/google' } }, required: ['query'] } } },
