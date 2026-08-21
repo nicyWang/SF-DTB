@@ -391,6 +391,9 @@ app.whenReady().then(() => {
 
   // 系统托盘（传入主窗口getter与打开设置回调）
   initToolsIPC(ipcMain, (msg) => console.log(msg)); // 小球Agent工具层
+  ipcMain.on('pet-open-devtools', (e) => {
+    try { e.sender.openDevTools({ mode: 'detach' }); } catch { /* ignore */ }
+  });
   initEdgeTTSIPC(ipcMain); // Edge TTS（甜美真人音色）
   initDoubaoIPC(ipcMain); // 豆包端到端实时语音（低延迟流式对话）
   initAvatarIPC(ipcMain); // 火山实时互动数字人（FlowAct-R1）

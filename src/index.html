@@ -659,6 +659,10 @@
               setTimeout(() => window.windowAPI?.setIgnoreCursor?.(false), 8000);
             },
           },
+          {
+            label: '开发者控制台',
+            action: () => window.windowAPI?.openDevtools?.(),
+          },
           { label: '退出', danger: true, action: () => window.windowAPI?.quit?.() },
         ];
         for (const it of items) {

@@ -545,6 +545,11 @@
       <textarea id="db-role" rows="2" placeholder="例：你是主人的桌面小球宠物，陪伴主人工作，性格甜美粘人"></textarea>
     </div>
     <div class="row">
+      <label for="db-bargein">实时打断（她说话时插嘴）</label>
+      <input type="checkbox" id="db-bargein">
+      <div class="hint" style="font-size:11px">开启后她播报期间说话可打断（耳机最佳）。关闭则播完再听。</div>
+    </div>
+    <div class="row">
       <label for="db-voice">音色</label>
       <select id="db-voice">
         <option value="zh_female_xiaohe_jupiter_bigtts">小何（甜美·台湾腔）</option>
@@ -677,6 +682,7 @@
       $('db-botname').value = dbc.botName || '';
       $('db-role').value = dbc.systemRole || '';
       $('db-voice').value = dbc.voice || 'zh_female_xiaohe_jupiter_bigtts';
+      $('db-bargein').checked = dbc.bargein !== false;
 
       const vc = loadJSON(KEYS.voice, { ttsEnabled: true, ttsRate: 1.0, voiceName: '', asrEnabled: true, edgeVoice: 'zh-CN-XiaoyiNeural' });
       $('voice-tts-enabled').checked = vc.ttsEnabled !== false;
@@ -720,7 +726,8 @@
           accessToken: $('db-token').value.trim(),
           botName: $('db-botname').value.trim() || '毛毛',
           systemRole: $('db-role').value.trim(),
-          voice: $('db-voice').value
+          voice: $('db-voice').value,
+          bargein: $('db-bargein').checked
         },
         voice: {
           ttsEnabled: $('voice-tts-enabled').checked,
