@@ -156,6 +156,8 @@ contextBridge.exposeInMainWorld('doubaoAPI', {
   sendAudio(buf) {
     ipcRenderer.send('doubao-audio-in', buf);
   },
+  // 豆包代播文本（工具结果门面统一：豆包音色直接TTS）
+  say(text) { ipcRenderer.send('doubao-say', text); },
   // 服务端事件（user-speech-start/user-text/tts-start/reply-text/...）
   onEvent(fn) {
     if (__dbEvHandler) ipcRenderer.removeListener('doubao-event', __dbEvHandler);

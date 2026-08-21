@@ -611,7 +611,18 @@ class PetController {
         this._emitVoiceState('thinking');
         this.bubble.showHint?.(`🔧 处理：${text.slice(0, 30)}`, 2500);
         const reply = await this.chat(text); // GLM + 工具链（含气泡展示）
-        if (reply && this._voiceActive) await this._speakReply(reply);
+        // 门面统一：工具结果由豆包音色代播（用户视角永远是"豆包"在回答）
+        if (reply && this._voiceActive) {
+          if (this.doubao?.active) {
+            this.doubao.say?.(reply); // ChatTTSText → 豆包直接合成播报
+            this.bubble.showText(reply, Math.max(4000, reply.length * 120));
+            // 等豆包播完（粗略按字数估时，期间保持 speaking 状态）
+            this._emitVoiceState('speaking');
+            await new Promise(r => setTimeout(r, Math.min(15000, 1500 + reply.length * 180)));
+          } else {
+            await this._speakReply(reply); // 豆包不在（降级VAD）用本地TTS
+          }
+        }
       } catch (e) {
         console.warn('[PetController] 工具分流失败:', e?.message);
         this.bubble.showHint?.('刚才那个没处理好，再说一次？', 2500);

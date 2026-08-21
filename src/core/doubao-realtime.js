@@ -40,6 +40,18 @@ class DoubaoRealtime {
   suppressAudio() { this._suppressAudio = true; }
   resumeAudio() { this._suppressAudio = false; }
 
+  /** 豆包代播文本（工具结果门面统一）：ChatTTSText→豆包TTS→音频正常回传播放 */
+  say(text) {
+    try {
+      this._suppressAudio = false; // 代播的音频要能回传
+      this._micMuted = true;       // 播报期间静音麦（防回声环）
+      this._scheduleMicUnmute();   // 按默认时长恢复
+      this.audioAPI.say?.(text);
+    } catch (e) {
+      console.warn('[DoubaoRealtime] say 失败:', e?.message);
+    }
+  }
+
   /** 启动实时对话（低延迟流式；失败返回 false → 调用方回退现有链路） */
   async start(handlers = {}) {
     if (this._active) return true;
