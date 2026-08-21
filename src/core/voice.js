@@ -659,9 +659,22 @@ class VoiceService {
     analyser.fftSize = 1024;
     src.connect(analyser);
     const buf = new Float32Array(analyser.fftSize);
-    const THRESH = 0.035;   // 说话音量阈值（RMS）
-    const SILENT_BREAK = 16; // ~16×60ms≈1s 静音 → 断句
-    const LEAD_IN = 2;       // 连续2帧超阈值才算说话开始（防噪点）
+    const BASE_THRESH = 0.035; // 基准阈值（安静环境）
+    const SILENT_BREAK = 16;   // ~16×60ms≈1s 静音 → 断句
+    const LEAD_IN = 2;         // 连续2帧超阈值才算说话开始（防噪点）
+    // 自适应阈值：开场 1.2s 采样环境底噪 → 阈值 = max(基准, 底噪×1.8)。
+    // 嘈杂环境（外接音响底噪/风扇）基线可达 0.04+，固定阈值会把底噪当说话/或状态混乱。
+    let THRESH = BASE_THRESH;
+    this._vadCalibrating = true;
+    let calSamples = [];
+    setTimeout(() => {
+      if (calSamples.length > 5) {
+        const noise = calSamples.reduce((a, b) => a + b, 0) / calSamples.length;
+        THRESH = Math.max(BASE_THRESH, noise * 1.8);
+        console.log('[VoiceService] VAD 自适应阈值: 底噪=' + noise.toFixed(4) + ' → 阈值=' + THRESH.toFixed(4));
+      }
+      this._vadCalibrating = false;
+    }, 1200);
 
     const poll = () => {
       if (!this._vadActive) return;
@@ -669,10 +682,26 @@ class VoiceService {
         this._vadTimer = setTimeout(poll, 60);
         return;
       }
+      // AudioContext 被系统挂起（自动播放策略/焦点切换）→ 主动恢复，
+      // 否则 analyser 无数据 = "说话听不见"（麦克风其实开着）
+      if (this._vadCtx && this._vadCtx.state === 'suspended') {
+        this._vadCtx.resume().catch(() => { /* ignore */ });
+      }
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
       const rms = Math.sqrt(sum / buf.length);
+      if (this._vadCalibrating) {
+        calSamples.push(rms);
+        // 校准期用户已开口（RMS 远超基准）→ 立即用默认阈值结束校准，第一句话不丢
+        if (calSamples.length >= 4 && rms > BASE_THRESH * 2) {
+          this._vadCalibrating = false;
+          THRESH = BASE_THRESH;
+        } else {
+          this._vadTimer = setTimeout(poll, 60);
+          return;
+        }
+      }
 
       // ===== 外放回声防护（全时段） =====
       // 主进程 afplay 播报中（豆包TTS/EdgeTTS），喇叭声音会进麦克风——
