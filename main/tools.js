@@ -201,6 +201,26 @@ const TOOLS = {
     if (!ok) throw new Error(`提醒不存在或已触发: ${id}`);
     return { ok: true, message: `已取消提醒 ${id}` };
   },
+  // type-text: { text, x?, y? } → 在指定坐标点击后键盘输入文本（Accessibility 事件）
+  // 用途：主人说"在输入框里输入xx"——配合屏幕指挥的坐标，或直接打给当前焦点控件
+  'type-text': async ({ text, x, y }) => {
+    const t = String(text || '').slice(0, 500);
+    if (!t) throw new Error('text 不能为空');
+    const validCoord = (v) => typeof v === 'number' && v >= 0 && v <= 10000;
+    const clickPart = (validCoord(x) && validCoord(y))
+      ? `tell application "System Events" to click at {${Math.round(x)}, ${Math.round(y)}}
+`
+      : '';
+    const esc = t.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = `${clickPart}tell application "System Events" to keystroke "${esc}"`;
+    return await appleScript(script);
+  },
+  // click-at: { x, y } → 点击屏幕坐标（配合视觉定位的目标）
+  'click-at': async ({ x, y }) => {
+    const validCoord = (v) => typeof v === 'number' && v >= 0 && v <= 10000;
+    if (!validCoord(x) || !validCoord(y)) throw new Error('x/y 需为 0-10000 的数字');
+    return await appleScript(`tell application "System Events" to click at {${Math.round(x)}, ${Math.round(y)}}`);
+  },
 };
 
 // GLM/OpenAI function-calling 工具定义（给LLM看的说明书）
@@ -218,7 +238,9 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'open-app', description: '打开macOS应用（如 Safari、WeChat），仅允许字母数字空格名称', parameters: { type: 'object', properties: { appName: { type: 'string', description: '应用名，如 "Safari"' } }, required: ['appName'] } } },
   { type: 'function', function: { name: 'list-dir', description: '列目录（最多50项含类型），仅允许 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '目录路径，如 "~/Desktop"' } }, required: ['dirPath'] } } },
   { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒（到点弹给主人）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数（0<x≤43200）' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },
-  { type: 'function', function: { name: 'cancel-reminder', description: '取消一个已设置的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'cancel-reminder', description: '取消一个已设置的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } } }, required: ['id'] } },
+  { type: 'function', function: { name: 'type-text', description: '在屏幕指定坐标点击后键盘输入文本（macOS Accessibility）。用于"在输入框里输入xx"类指令；x/y 可选（不给则在当前焦点处输入）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要输入的文本' }, x: { type: 'number', description: '目标输入框屏幕X坐标（视觉分析提供）' }, y: { type: 'number', description: '目标输入框屏幕Y坐标' } }, required: ['text'] } } },
+  { type: 'function', function: { name: 'click-at', description: '点击屏幕坐标（配合屏幕分析的目标位置执行点击，如关弹窗/按按钮）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
 ];
 
 // IPC入口
