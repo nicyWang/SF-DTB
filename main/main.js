@@ -79,8 +79,8 @@ function createMainWindow() {
     mainQuery ? { query: mainQuery } : undefined,
   );
 
-  // macOS: 放到屏幕右上角（留出边距）
-  if (process.platform === 'darwin') {
+  // 窗口放到屏幕右上角（留出边距）——macOS 与 Windows 通用（工作区已排除任务栏）
+  {
     const { workArea } = screen.getPrimaryDisplay();
     const bounds = mainWindow.getBounds();
     mainWindow.setPosition(
