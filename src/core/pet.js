@@ -481,8 +481,14 @@ class PetController {
     this._voiceActive = true;
     this.touch();
 
-    // ---- 优先级1：豆包端到端实时语音（几百ms延迟，服务端VAD打断）----
-    if (this.doubao?.isConfigured?.()) {
+    // ---- 引擎选择：voice-engine 配置（doubao=豆包端到端极速 | self=自建管线全能）----
+    // 默认 self（GLM 原生工具调用、单一大脑、可调试）；极速纯聊天可切 doubao
+    let engine = 'self';
+    try { engine = localStorage.getItem('pet-voice-engine') || 'self'; } catch { /* ignore */ }
+    const useDoubao = engine === 'doubao' && this.doubao?.isConfigured?.();
+
+    // ---- 豆包端到端实时语音（几百ms延迟，服务端VAD打断）----
+    if (useDoubao) {
       this._emitVoiceState('listening');
       this.bubble.showHint?.('实时语音连接中…');
       let interrupted = false; // 运行中断开（非启动失败）
@@ -916,16 +922,24 @@ class PetController {
 
   async _processVoiceText(text) {
     if (!text || !this._voiceActive) return;
+    const t0 = Date.now();
     this.voice.stopListen?.();
     this._emitVoiceState('thinking');
     this.bubble.showHint?.(`你说：${text}`, 3000);
 
+    // 先应答（操作类指令即时给"好嘞"——感知延迟降到零，GLM 后台干活）
+    const ACTION_HINT = /^(打开|关闭|关掉|点击|点|启动|帮我|设置?个?|定个?|发|按|输入)/.test(text.trim());
+    if (ACTION_HINT) {
+      this.bubble.showHint?.('好嘞，马上！', 1200);
+    }
+
     let reply = '';
     try {
-      reply = await this.chat(text); // 复用现有文字流程（LLM 流式 + 打字机气泡 + 记忆/性格回写）
+      reply = await this.chat(text); // GLM 原生工具链（chat 内含工具铁律+两阶段强制）
     } catch (err) {
       console.error('[PetController] 语音 chat 失败:', err);
     }
+    console.log(`[self-pipe] 全链路耗时 ${Date.now() - t0}ms`);
     if (!this._voiceActive) return; // 会话已被用户终止
 
     if (reply) await this._speakReply(reply);
