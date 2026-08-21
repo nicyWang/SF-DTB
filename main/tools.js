@@ -326,6 +326,22 @@ return "已发送"`;
 //        键盘类走 System Events（osascript，支持修饰键组合）
 // Windows: 翻译成 PowerShell（SendKeys / Win32 mouse_event）
 const MOUSE_BIN = path.join(__dirname, '..', 'bin', 'pet-mouse');
+const AX_BIN = path.join(__dirname, '..', 'bin', 'axtool');
+const hasAxBin = () => { try { fs.accessSync(AX_BIN, fs.constants.X_OK); return true; } catch { return false; } };
+const runAx = (args) => new Promise((resolve) => {
+  if (!hasAxBin()) return resolve('执行失败: bin/axtool 未编译');
+  execFile(AX_BIN, args.map(String), { timeout: 20000, maxBuffer: 1024 * 64 }, (err, stdout, stderr) => {
+    const out = String(stdout).trim();
+    resolve(err ? '执行失败: ' + String(stderr || err.message).slice(0, 150) : out);
+  });
+});
+// 真实前台应用 pid（NSWorkspace 在 Electron 内会误报自己；用 System Events 查）
+const frontPid = () => new Promise((resolve) => {
+  execFile('osascript', ['-e', 'tell application "System Events" to get unix id of first application process whose frontmost is true'], { timeout: 5000 }, (err, stdout) => {
+    const pid = parseInt(String(stdout || '').trim(), 10);
+    resolve(Number.isFinite(pid) ? pid : null);
+  });
+});
 const hasMouseBin = () => { try { fs.accessSync(MOUSE_BIN, fs.constants.X_OK); return true; } catch { return false; } };
 
 // 执行 pet-mouse（macOS 专用；Windows 走 winMouse）
@@ -415,6 +431,51 @@ TOOLS['hotkey-text'] = async ({ text }) => {
   if (/^[a-z0-9]$/.test(main)) return await appleScript(se(`keystroke "${main}"${using}`));
   throw new Error(`不支持的键: ${main}`);
 };
+// ══ AX 名字直击（精准模式：读系统 Accessibility 树，按名字找元素直接操作——零坐标猜测） ══
+TOOLS['ui-click'] = async ({ name, app }) => {
+  const n = String(name || '').trim().slice(0, 60);
+  if (!n) throw new Error('name（元素名，如"重新加载""发送"）不能为空');
+  let pid = null;
+  if (app) { // 指定应用：先激活再取其 pid
+    const safeApp = String(app).replace(/[^\w\p{Script=Han} .\-]/u, '');
+    execFile('open', ['-a', safeApp], { timeout: 8000 }, () => {});
+    await new Promise(r => setTimeout(r, 1200));
+    pid = await new Promise((resolve) => {
+      execFile('osascript', ['-e', `tell application "System Events" to get unix id of first application process whose name is "${safeApp}"`], { timeout: 5000 }, (e, so) => {
+        const p = parseInt(String(so || '').trim(), 10);
+        resolve(Number.isFinite(p) ? p : null);
+      });
+    });
+  } else {
+    pid = await frontPid();
+  }
+  const axArgs = ['axclick', n];
+  if (pid) axArgs.push('--pid', String(pid));
+  const r = await runAx(axArgs);
+  if (String(r).startsWith('err:not-found')) throw new Error(`当前应用里没找到叫"${n}"的元素（可先用 ui-list 查看可点元素）`);
+  return String(r).replace(/^ok:(press|pid)\|/, '').replace(/\|/g, ' ') + `（已${String(r).includes('press') ? '直接按压' : '点击'}）`;
+};
+TOOLS['ui-set'] = async ({ name, value, app }) => {
+  const n = String(name || '').trim().slice(0, 60);
+  const v = String(value ?? '').slice(0, 2000);
+  if (!n || !v) throw new Error('name 和 value 必填');
+  if (app) {
+    execFile('open', ['-a', String(app).replace(/[^\w\p{Script=Han} .\-]/u, '')], { timeout: 8000 }, () => {});
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  const r = await runAx(['axset', n, v]);
+  if (String(r).startsWith('err:')) throw new Error(`输入框"${n}"没找到或设置失败: ${r}`);
+  return `已在"${n}"输入: ${v.slice(0, 50)}`;
+};
+TOOLS['ui-list'] = async ({ filter = '', app }) => {
+  if (app) {
+    execFile('open', ['-a', String(app).replace(/[^\w\p{Script=Han} .\-]/u, '')], { timeout: 8000 }, () => {});
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  const r = await runAx(['axlist', String(filter).slice(0, 40)]);
+  return String(r).split('\n').slice(0, 60).join('\n') || '（无匹配元素）';
+};
+
 
 // GLM/OpenAI function-calling 工具定义（给LLM看的说明书）
 const TOOL_SPECS = [
@@ -442,6 +503,9 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'mouse-scroll', description: '滚动屏幕（deltaY负=向上滚,正=向下滚,单位像素）', parameters: { type: 'object', properties: { deltaY: { type: 'number' }, deltaX: { type: 'number' } }, required: ['deltaY'] } } },
   { type: 'function', function: { name: 'key-press', description: '按键/组合键（key支持enter/esc/tab/space/delete/方向键/F1-F12/单字符；modifiers数组如["cmd","shift"]）', parameters: { type: 'object', properties: { key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } } }, required: ['key'] } } },
   { type: 'function', function: { name: 'hotkey-text', description: '快捷键文本式（最直觉）："cmd+c" "cmd+shift+3" "ctrl+a" "enter" "esc"', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } },
+  { type: 'function', function: { name: 'ui-click', description: '【精准模式·优先用】按名字直接点击UI元素（读系统Accessibility树，零坐标猜测，光标不动，毫秒级）。name=元素显示名（如"重新加载""发送""登录"），app=可选先激活应用（如"Chrome"）', parameters: { type: 'object', properties: { name: { type: 'string', description: '元素名' }, app: { type: 'string', description: '可选：目标应用名' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'ui-set', description: '【精准模式】按名字找到输入框并直接设值（比打字快且准）。如地址栏/搜索框填内容', parameters: { type: 'object', properties: { name: { type: 'string', description: '输入框名（如"地址和搜索栏"）' }, value: { type: 'string', description: '要填入的内容' }, app: { type: 'string' } }, required: ['name', 'value'] } } },
+  { type: 'function', function: { name: 'ui-list', description: '列出当前（或指定）应用所有可交互元素名+坐标（精准模式的眼睛：先看有什么再操作）', parameters: { type: 'object', properties: { filter: { type: 'string', description: '可选过滤词' }, app: { type: 'string' } }, required: [] } } },
 ];
 
 // IPC入口
