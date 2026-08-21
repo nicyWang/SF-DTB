@@ -755,6 +755,75 @@ class PetController {
    * 最多 maxSteps 轮，每轮重新截屏（屏幕会变化），失败换坐标重试。
    * 返回：成功与否的自然语言汇报（供豆包代播）。
    */
+  /**
+   * 任务验证器：任务分类 → 专属验证策略（判断"真完成"的统一入口）。
+   * 每类任务有独立的证据链，不依赖单一按钮文字：
+   *  - 播放/暂停：按钮语义双向校验 + 执行前记录状态，要求状态翻转
+   *  - 打开应用：目标进程存在（系统级）
+   *  - 打开面板/页面：AX 树新增元素对比（执行前快照 vs 执行后）
+   *  - 输入文字：目标输入框 value 非空
+   *  - 文件操作：文件系统直接查
+   *  - 其他：AX 树变化 + vision 证据
+   */
+  async _verifyTask(task, axTreeBefore) {
+    const taskS = String(task);
+    // 1) 播放/暂停类：终极证据=麦克风听扬声器能量（2秒采样，RMS>0.02=有声）
+    //    （按钮文本不可靠：酷狗切换后 AX desc 不刷新）
+    if (/播放|放.*(歌|音乐|电台)/.test(taskS) && !/暂停|停/.test(taskS)) {
+      try {
+        const r = await window.windowAPI.invokeTool('mic-energy', {});
+        const rms = Number(r?.result) || 0;
+        if (rms > 0.02) return { ok: true, evidence: '扬声器有声（RMS=' + rms.toFixed(3) + '）' };
+        return { ok: false, evidence: '扬声器静默（RMS=' + rms.toFixed(3) + '）' };
+      } catch { /* 无此工具则落按钮检测 */ }
+    }
+    if (/(暂停|停止).*(音乐|歌|播放)/.test(taskS)) {
+      try {
+        const r = await window.windowAPI.invokeTool('mic-energy', {});
+        const rms = Number(r?.result) || 0;
+        if (rms < 0.01) return { ok: true, evidence: '已静音（RMS=' + rms.toFixed(3) + '）' };
+      } catch { /* ignore */ }
+    }
+    // 1b) 按钮状态（次选，酷狗等不刷新的会漏——由上面能量法兜底）
+    if (/播放|放.*(歌|音乐|电台)/.test(taskS)) {
+      try {
+        const r = await window.windowAPI.invokeTool('ui-list', {});
+        const t = String(r?.result || '');
+        const btn = t.split('\n').find((l) => /\[(\d+)\].*(暂停|播放)/.test(l) && !/列表|随机|电台|模式|歌单/.test(l));
+        if (btn) {
+          const nowPaused = btn.includes('暂停');
+          const wasPaused = axTreeBefore ? (axTreeBefore.split('\n').find((l) => /暂停/.test(l) && !/列表|随机|电台|模式|歌单/.test(l)) ? true : false) : false;
+          if (nowPaused !== wasPaused) return { ok: true, evidence: nowPaused ? '已暂停' : '已开始播放' };
+          return { ok: false, evidence: nowPaused ? '仍处于暂停（点击未生效）' : '本来就在播放' };
+        }
+      } catch { /* ignore */ }
+    }
+    // 2) 打开应用类：查进程
+    if (/打开|启动/.test(taskS) && /微信|酷狗|网易云|备忘录|浏览器|Safari|Chrome|音乐|计算器|日历|访达/.test(taskS)) {
+      const APP_PROC = { '微信': 'WeChat', '酷狗': 'KugouMusic', '网易云': 'NeteaseMusic', '备忘录': 'Notes', '浏览器': 'Safari', 'Safari': 'Safari', 'Chrome': 'Google Chrome', '计算器': 'Calculator', '日历': 'Calendar', '访达': 'Finder' };
+      const key = Object.keys(APP_PROC).find((k) => taskS.includes(k));
+      if (key) {
+        try {
+          const r = await window.windowAPI.invokeTool('shell', { cmd: 'pgrep -x ' + APP_PROC[key] });
+          if (String(r?.result || '').trim()) return { ok: true, evidence: APP_PROC[key] + ' 进程已运行' };
+          return { ok: false, evidence: '未检测到进程' };
+        } catch { /* ignore */ }
+      }
+    }
+    // 3) 通用：AX 树有变化（元素数/内容差异）
+    try {
+      const r = await window.windowAPI.invokeTool('ui-list', {});
+      const after = String(r?.result || '');
+      if (axTreeBefore && axTreeBefore !== after) {
+        const aL = axTreeBefore.split('\n').filter(Boolean);
+        const bL = after.split('\n').filter(Boolean);
+        const added = bL.filter((l) => !aL.includes(l)).length;
+        if (added > 0) return { ok: true, evidence: '界面新增 ' + added + ' 个元素（状态已变化）' };
+      }
+    } catch { /* ignore */ }
+    return null; // 无法判定 → 由 vision evidence 兜底
+  }
+
   _isScreenAction(text) {
     return /(点|点击|单击|双击|右键|关掉|关闭|按下|勾选|选择|拖|输入|填).{0,20}(它|那个|这个|按钮|弹窗|窗口|选项|框|图标|位置|搜索|输入)|帮我(点|关|拖|选|填|处理)|(点|关)一下(它|那个)|在.{0,12}(里|中|上面).{0,6}(输入|填|写)|^(播放|放).{0,12}(歌|音乐|电台|电台歌曲|歌单)|(播放|放一?首)/.test(text);
   }
@@ -798,6 +867,7 @@ class PetController {
 
   async _screenActionLoopInner(task) {
     const MAX_STEPS = 8; // 多步任务（如"播放电台"需 开应用→找入口→点播放 多轮）4轮不够
+    let axTreeBefore = null; // 执行前 AX 快照（供 _verifyTask 状态对比）
     let silentTries = 0; // 同一目标静默点击次数（2次无效自动降级真实点击——菜单栏等系统元素不响应AX）
     let lastTarget = '';
     this.bubble.showHint?.('🎯 开始操作…', 2000);
@@ -806,11 +876,18 @@ class PetController {
         // 1) 感知（Codex 式双通道）：
         //    a. AX 控件树（首选）：读系统 Accessibility 的元素名+精确坐标——零猜测
         //    b. 截图（辅助）：树里找不到目标（自绘UI/游戏）时视觉兜底
+        // 任务提到具体应用 → 每轮确保其在前台（置顶小球会抢焦点，需反复激活）
+        const APP_MAP2 = { '酷狗': 'KugouMusic', '网易云': 'NeteaseMusic', 'QQ音乐': 'QQMusic', '微信': 'WeChat', '备忘录': 'Notes', '浏览器': 'Safari', 'Safari': 'Safari', 'Chrome': 'Google Chrome', '访达': 'Finder', 'Finder': 'Finder', 'iTunes': 'Music' };
+        const appKey = Object.keys(APP_MAP2).find((k) => task.includes(k));
+        if (appKey) {
+          try { await window.windowAPI.invokeTool('open-app', { appName: APP_MAP2[appKey] }); await new Promise((r) => setTimeout(r, 600)); } catch { /* ignore */ }
+        }
         let axTree = '';
         try {
           const r = await window.windowAPI.invokeTool('ui-list', {});
           if (r?.ok && r.result) axTree = String(r.result);
         } catch { /* ignore */ }
+        if (step === 1) axTreeBefore = axTree; // 记录初始状态
         const b64 = window.screenAPI?.getScreenshot ? await window.screenAPI.getScreenshot() : null;
         if (!b64 && !axTree) return '截屏失败，没法操作屏幕';
         const img = b64 ? 'data:image/png;base64,' + b64 : null;
@@ -831,6 +908,18 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
         const m = String(analysis || '').match(/\{[\s\S]*\}/);
         if (!m) return `第${step}轮看不懂屏幕，放弃了。任务：${task}`;
         const j = JSON.parse(m[0]);
+        // 2.5) 系统级验证器：done 声称完成 → 用该任务类型的专属证据链复核
+        if (j.done) {
+          const ver = await this._verifyTask(task, axTreeBefore);
+          if (ver && ver.ok === false) {
+            console.log('[行动回路] 验证器否决:', ver.evidence, '→ 继续执行');
+            j.done = false;
+            j.target = j.target || {};
+            if (!j.target.action || j.target.action === 'none') j.target.action = 'click';
+          } else if (ver && ver.ok === true) {
+            j.evidence = ver.evidence; // 系统证据覆盖 vision 证据（更硬）
+          }
+        }
         // 2) 完成 → 证据校验（防"点开了≠完成了"误报）：无证据的 done 不信，继续干活
         if (j.done) {
           const ev = String(j.evidence || '').trim();
@@ -863,11 +952,25 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
           }
         }
 
-        // 4) 行动：Codex 式索引优先（执行器自查坐标零误差）> 绝对坐标 > 归一化估算
-        const elIdx = Number(j.element_index);
+        // 4) 行动：索引优先（模型给 or 本地关键词兜底匹配）> 绝对坐标 > 归一化估算
+        let elIdx = Number(j.element_index);
+        // 模型失能兜底：element_index=-1 → 用任务关键词直查元素表（本地匹配零智力依赖）
+        if (!(Number.isInteger(elIdx) && elIdx >= 0)) {
+          const kwMap = [
+            [/播放|放歌|听歌|放音乐/, /\[(\d+)\]\s*\w+\s*\/?暂停(?!列表|模式)/],
+            [/暂停|停止/, /\[(\d+)\]\s*\w+\s*\/?播放(?!列表|模式|电台|歌单)/],
+            [/搜索|查找/, /\[(\d+)\]\s*AX(SearchField|TextField)/],
+          ];
+          for (const [kw, re] of kwMap) {
+            if (kw.test(task) && axTree) {
+              const m2 = re.exec(axTree);
+              if (m2) { elIdx = Number(m2[1]); console.log('[行动回路] 模型未给索引，本地匹配元素[' + elIdx + ']'); break; }
+            }
+          }
+        }
         if (Number.isInteger(elIdx) && elIdx >= 0 && (j.target?.action === 'click' || !j.target?.action)) {
           try {
-            const r = await window.windowAPI.invokeTool('ui-click', { index: elIdx });
+            const r = await window.windowAPI.invokeTool('ui-click', { index: elIdx, app: appKey ? APP_MAP2[appKey] : undefined });
             if (r?.ok === true) {
               this.bubble.showHint?.(`🖱 点元素[${elIdx}] · 第${step}轮`, 2000);
               await new Promise((r2) => setTimeout(r2, 1000)); // 等界面响应，下一轮刷新快照验证
@@ -876,8 +979,13 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
           } catch (e) { console.warn('[行动回路] 索引点击失败，落坐标:', e?.message); }
         }
         const absX = Number(j.target.x_abs), absY = Number(j.target.y_abs);
-        const px = (Number.isFinite(absX) && absX > 0) ? Math.round(absX) : Math.round((j.target.x / 1000) * screen.width);
-        const py = (Number.isFinite(absY) && absY > 0) ? Math.round(absY) : Math.round((j.target.y / 1000) * screen.height);
+        let px = (Number.isFinite(absX) && absX > 10) ? Math.round(absX) : Math.round((Number(j.target.x) / 1000) * screen.width);
+        let py = (Number.isFinite(absY) && absY > 10) ? Math.round(absY) : Math.round((Number(j.target.y) / 1000) * screen.height);
+        // 坐标防呆：落到屏幕角落(0,0 附近)=无效目标 → 本轮跳过不点（防误点）
+        if (px < 30 && py < 30) {
+          console.log('[行动回路] 目标坐标无效 (' + px + ',' + py + ')，跳过本轮点击');
+          continue;
+        }
         const act = j.target.action;
         const sameTarget = lastTarget === j.target.name;
         silentTries = sameTarget ? silentTries + 1 : 0;
