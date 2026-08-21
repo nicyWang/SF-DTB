@@ -485,7 +485,11 @@ class VoiceService {
    * @returns {Promise<string>} 识别文本（失败抛错）
    */
   async transcribe(blob) {
-    const cfg = readJSON(this.storage, LLM_CONFIG_KEY, {});
+    // ASR 配置解析：独立配置（pet-asr-config）> 跟随 LLM（兼容旧版）
+    // 支持任意 OpenAI 兼容 /audio/transcriptions 端点（智谱/火山方舟/OpenAI/Groq/DeepSeek等）
+    const asrCfg = readJSON(this.storage, 'pet-asr-config', {});
+    const llmCfg = readJSON(this.storage, LLM_CONFIG_KEY, {});
+    const cfg = (asrCfg.baseURL && asrCfg.apiKey) ? asrCfg : llmCfg;
     const base = String(cfg.baseURL || '').replace(/\/+$/, '');
     if (!base || !cfg.apiKey) throw new Error('未配置 LLM 服务（转写需要智谱 API Key）');
 
@@ -499,7 +503,7 @@ class VoiceService {
       console.warn('[VoiceService] WAV 重编码失败，按原始格式上传:', e);
     }
 
-    const model = cfg.sttModel || 'glm-asr-2512';
+    const model = asrCfg.model || cfg.sttModel || 'glm-asr-2512';
     const fd = new FormData();
     fd.append('file', payload, filename);
     fd.append('model', model);
@@ -509,7 +513,12 @@ class VoiceService {
       headers: { Authorization: 'Bearer ' + cfg.apiKey },
       body: fd,
     });
-    if (!res.ok) throw new Error('转写服务 HTTP ' + res.status);
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      let hint = '';
+      try { hint = JSON.parse(errBody)?.error?.message || ''; } catch { /* ignore */ }
+      throw new Error(`转写服务 HTTP ${res.status}${hint ? ': ' + hint.slice(0, 100) : ''}`);
+    }
     const data = await res.json().catch(() => ({}));
     return String(data.text || '').trim();
   }
@@ -906,12 +915,15 @@ class VoiceService {
    * @returns {Promise<boolean>} 是否完整播完
    */
   async speakCloud(text, opts = {}) {
-    const cfg = readJSON(this.storage, LLM_CONFIG_KEY, {});
+    // TTS 配置解析：独立（pet-tts-config）> 跟随 LLM（OpenAI 兼容 /audio/speech：智谱/火山/OpenAI等）
+    const ttsCfg = readJSON(this.storage, 'pet-tts-config', {});
+    const llmCfg0 = readJSON(this.storage, LLM_CONFIG_KEY, {});
+    const cfg = (ttsCfg.baseURL && ttsCfg.apiKey) ? ttsCfg : llmCfg0;
     const base = String(cfg.baseURL || '').replace(/\/+$/, '');
     if (!base || !cfg.apiKey) return false; // 未配置 → 调用方降级系统 TTS
     const input = String(text || '').slice(0, 1024);
     const body = {
-      model: cfg.ttsModel || 'glm-tts',
+      model: ttsCfg.model || cfg.ttsModel || 'glm-tts',
       input,
       voice: opts.voice || cfg.ttsVoice || 'tongtong',
       response_format: 'wav',

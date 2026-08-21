@@ -545,6 +545,34 @@
       <textarea id="db-role" rows="2" placeholder="例：你是主人的桌面小球宠物，陪伴主人工作，性格甜美粘人"></textarea>
     </div>
     <div class="row">
+      <label for="asr-preset">语音识别 ASR</label>
+      <select id="asr-preset">
+        <option value="">跟随 LLM 配置</option>
+        <option value="zhipu">智谱 GLM-ASR</option>
+        <option value="volc">火山方舟</option>
+        <option value="openai">OpenAI Whisper</option>
+        <option value="groq">Groq Whisper</option>
+        <option value="custom">自定义</option>
+      </select>
+    </div>
+    <div class="row"><label for="asr-base">ASR 接口地址</label><input type="text" id="asr-base" placeholder="https://open.bigmodel.cn/api/paas/v4"></div>
+    <div class="row"><label for="asr-key">ASR API Key</label><input type="password" id="asr-key"></div>
+    <div class="row"><label for="asr-model">ASR 模型</label><input type="text" id="asr-model" placeholder="glm-asr-2512"></div>
+    <div class="row">
+      <label for="tts-preset">语音合成 TTS</label>
+      <select id="tts-preset">
+        <option value="">跟随 LLM 配置</option>
+        <option value="zhipu">智谱 GLM-TTS</option>
+        <option value="volc">火山方舟</option>
+        <option value="openai">OpenAI TTS</option>
+        <option value="custom">自定义</option>
+      </select>
+    </div>
+    <div class="row"><label for="tts-base">TTS 接口地址</label><input type="text" id="tts-base" placeholder="https://open.bigmodel.cn/api/paas/v4"></div>
+    <div class="row"><label for="tts-key">TTS API Key</label><input type="password" id="tts-key"></div>
+    <div class="row"><label for="tts-model">TTS 模型</label><input type="text" id="tts-model" placeholder="glm-tts"></div>
+    <div class="hint" style="font-size:11px;margin:4px 0 8px">留空=跟随上方 LLM 配置（OpenAI 兼容端点通吃：智谱/火山/OpenAI/Groq/DeepSeek…）。想用不同厂商组合就单独填。</div>
+    <div class="row">
       <label for="voice-engine">语音引擎</label>
       <select id="voice-engine">
         <option value="self">全能模式（自建管线·GLM原生工具调用）</option>
@@ -691,6 +719,12 @@
       $('db-role').value = dbc.systemRole || '';
       $('db-voice').value = dbc.voice || 'zh_female_xiaohe_jupiter_bigtts';
       $('voice-engine').value = localStorage.getItem('pet-voice-engine') || 'self';
+      const asrC = loadJSON('pet-asr-config', {});
+      $('asr-base').value = asrC.baseURL || ''; $('asr-key').value = asrC.apiKey || ''; $('asr-model').value = asrC.model || '';
+      $('asr-preset').value = asrC._preset || '';
+      const ttsC = loadJSON('pet-tts-config', {});
+      $('tts-base').value = ttsC.baseURL || ''; $('tts-key').value = ttsC.apiKey || ''; $('tts-model').value = ttsC.model || '';
+      $('tts-preset').value = ttsC._preset || '';
       $('db-bargein').checked = dbc.bargein !== false;
 
       const vc = loadJSON(KEYS.voice, { ttsEnabled: true, ttsRate: 1.0, voiceName: '', asrEnabled: true, edgeVoice: 'zh-CN-XiaoyiNeural' });
@@ -755,6 +789,8 @@
       localStorage.setItem(KEYS.danmaku, JSON.stringify(cfg.danmaku));
       localStorage.setItem(KEYS.voice, JSON.stringify(cfg.voice));
       localStorage.setItem('pet-voice-engine', $('voice-engine').value);
+      localStorage.setItem('pet-asr-config', JSON.stringify({ baseURL: $('asr-base').value.trim(), apiKey: $('asr-key').value.trim(), model: $('asr-model').value.trim(), _preset: $('asr-preset').value }));
+      localStorage.setItem('pet-tts-config', JSON.stringify({ baseURL: $('tts-base').value.trim(), apiKey: $('tts-key').value.trim(), model: $('tts-model').value.trim(), _preset: $('tts-preset').value }));
       localStorage.setItem('pet-doubao-realtime-config', JSON.stringify(cfg.doubao));
       localStorage.setItem('pet-avatar-config', JSON.stringify(cfg.avatar));
       showToast('已保存全部设置');
@@ -1410,6 +1446,26 @@
 </script>
 <script>
   // 分区导航（独立脚本，DOM 就绪后绑定）
+  // 厂商预设自动填充
+  (function () {
+    var PRESETS = {
+      asr: { zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-asr-2512'], volc: ['https://ark.cn-beijing.volces.com/api/v3', ''], openai: ['https://api.openai.com/v1', 'whisper-1'], groq: ['https://api.groq.com/openai/v1', 'whisper-large-v3'] },
+      tts: { zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-tts'], volc: ['https://ark.cn-beijing.volces.com/api/v3', ''], openai: ['https://api.openai.com/v1', 'tts-1'] }
+    };
+    function hook(id, kind) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', function () {
+        var p = PRESETS[kind][el.value];
+        if (p) {
+          document.getElementById(kind + '-base').value = p[0];
+          if (p[1]) document.getElementById(kind + '-model').value = p[1];
+        }
+      });
+    }
+    hook('asr-preset', 'asr'); hook('tts-preset', 'tts');
+  })();
+
   (function () {
     function bind() {
       document.querySelectorAll('.snav a').forEach(function (a) {
