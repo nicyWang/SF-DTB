@@ -55,7 +55,28 @@ func walk(_ el: AXUIElement, _ depth: Int, _ out: inout [El]) {
 }
 
 let cmd = args[1]
-if cmd == "axclick" {
+if cmd == "axclick" && args.contains("--idx") {
+  guard let i = args.firstIndex(of: "--idx"), i + 1 < args.count, let wantIdx = Int(args[i + 1]) else { print("err:bad-idx"); exit(1) }
+  guard let app = focusedApp() else { print("err:no-app"); exit(1) }
+  var els: [El] = []
+  var winsAny: CFTypeRef?
+  AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &winsAny)
+  if let wins = winsAny as? [AXUIElement] { for w in wins { walk(w, 0, &els) } }
+  walk(app, 0, &els)
+  let hits = els.filter { e in ["AXButton","AXCheckBox","AXRadioButton","AXTab","AXMenuItem","AXPopUpButton","AXToolbarButton","AXLink","AXTextField","AXSearchField","AXTextView","AXComboBox"].contains(e.role) }
+  guard wantIdx >= 0 && wantIdx < hits.count else { print("err:idx-out-of-range total=\(hits.count)"); exit(2) }
+  let hit = hits[wantIdx]
+  if AXUIElementPerformAction(hit.ref, kAXPressAction as CFString) == .success {
+    print("ok:press|\(hit.role)|\(hit.title.prefix(30))")
+  } else {
+    let c = CGPoint(x: hit.frame.midX, y: hit.frame.midY)
+    guard let front = NSWorkspace.shared.frontmostApplication else { print("err:no-app"); exit(1) }
+    let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: c, mouseButton: .left)!
+    let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: c, mouseButton: .left)!
+    down.postToPid(front.processIdentifier); usleep(30000); up.postToPid(front.processIdentifier)
+    print("ok:pid|\(hit.role)|\(hit.title.prefix(30))")
+  }
+} else if cmd == "axclick" {
   guard args.count >= 3 else { print("err:need text"); exit(1) }
   let needle = args[2].lowercased()
   guard let app = focusedApp() else { print("err:no-app"); exit(1) }

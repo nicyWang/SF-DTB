@@ -431,9 +431,28 @@ TOOLS['hotkey-text'] = async ({ text }) => {
   if (/^[a-z0-9]$/.test(main)) return await appleScript(se(`keystroke "${main}"${using}`));
   throw new Error(`不支持的键: ${main}`);
 };
+// 索引点击 helper：axtool axclick --idx N（元素表 [N] 对齐）+ app 激活
+async function _uiClickByIndex(idx, app) {
+  if (app) {
+    const safeApp = String(app).replace(/[^\w\p{Script=Han} .\-]/u, '');
+    execFile('open', ['-a', safeApp], { timeout: 8000 }, () => {});
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  const r = await runAx(['axclick', '--idx', String(idx)]);
+  const rs = String(r);
+  if (rs.startsWith('err:') || rs.startsWith('执行失败')) {
+    throw new Error(`索引${idx}点击失败: ${rs.slice(0, 80)}`);
+  }
+  return rs.replace(/^ok:(press|pid)\|/, '').replace(/\|/g, ' ') + '（已点击）';
+}
+
 // ══ AX 名字直击（精准模式：读系统 Accessibility 树，按名字找元素直接操作——零坐标猜测） ══
-TOOLS['ui-click'] = async ({ name, app }) => {
+TOOLS['ui-click'] = async ({ name, app, index }) => {
   const n = String(name || '').trim().slice(0, 60);
+  // 索引模式：index 即元素表 [N]（可不传 name）
+  if (Number.isInteger(index) && index >= 0) {
+    return await _uiClickByIndex(index, app);
+  }
   if (!n) throw new Error('name（元素名，如"重新加载""发送"）不能为空');
   let pid = null;
   if (app) { // 指定应用：先激活再取其 pid

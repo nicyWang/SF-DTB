@@ -846,14 +846,20 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
           if (step >= MAX_STEPS) return `试了${step}轮还是不知道怎么操作：${j.status}`;
           continue; // 再看一眼（屏幕可能在动）
         }
-        // 3.5) 播放类任务专项验证：AX 树查播放控件状态（按钮=暂停→歌在放；=播放→没放）
+        // 3.5) 播放类任务专项验证（酷狗实测语义）：
+        // 按钮显示"暂停"=当前处于暂停状态（没在放）！必须再点它才会开始播放。
+        // 点击后再查：按钮变"播放/继续"才算真正在放歌。
         if (j.done && /播放|放.*歌|电台|音乐/.test(task) && axTree) {
-          const playing = /暂停|pause/i.test(axTree);
-          if (!playing) {
-            console.log('[行动回路] 播放任务但控件仍为"播放"→未真正开始，继续');
+          const btnLine = axTree.split('\n').find((l) => /暂停|播放/.test(l) && !/列表|随机|电台|歌单|模式/.test(l));
+          const paused = /暂停/.test(btnLine || '');
+          if (paused) {
+            console.log('[行动回路] 播放任务但按钮=暂停（未在放）→ 补一次点击启动播放');
             j.done = false;
-            j.target = j.target || {};
-            if (j.target.action === 'none' || !j.target.action) j.target.action = 'click';
+            j.target = j.target || { name: '播放按钮' };
+            j.target.action = 'click';
+            // 优先点暂停按钮本身（点它=恢复播放）
+            const mBtn = /\[(\d+)\].*暂停/.exec(btnLine || '');
+            if (mBtn) j.element_index = Number(mBtn[1]);
           }
         }
 
