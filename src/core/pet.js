@@ -348,6 +348,15 @@ class PetController {
 
       // 3. 组装 messages（人设system + 知识库检索 + 记忆块 + 最近对话）
       let messages = await this._buildMessages(text);
+        // CUA 行动回路：操作类指令（点/关/拖/填屏幕目标）→ 自动截屏-定位-执行-验证循环
+        if (this._isScreenAction?.(text) && window.screenAPI?.getScreenshot && !this._screenLooping) {
+          this._screenLooping = true;
+          try {
+            const result = await this._screenActionLoop(text);
+            this.bubble.showText(result, Math.max(4000, result.length * 120));
+            return result; // 操作类不走普通 chat 回复，直接返回回路结果
+          } finally { this._screenLooping = false; }
+        }
         // 屏幕指挥：涉及屏幕内容的请求 → 实时截屏分析注入（vision 坐标级定位）
         if (this._isScreenRequest?.(text)) {
           const sc = await this._analyzeScreenFor(text);
@@ -645,8 +654,17 @@ class PetController {
         // ── 第二段：执行 ──
         this.doubao?.suppressAudio?.();
         this._emitVoiceState('thinking');
-        this.bubble.showHint?.(`🔧 处理：${text.slice(0, 30)}`, 2500);
-        const reply = await this.chat(text); // GLM + 工具链
+
+        // 屏幕操作类 → CUA 行动回路（截屏→定位→执行→验证循环，自动重试）
+        let reply;
+        if (this._isScreenAction?.(text) && window.screenAPI?.getScreenshot) {
+          const result = await this._screenActionLoop(text);
+          reply = result;
+          this.bubble.showText(result, Math.max(4000, result.length * 120));
+        } else {
+          this.bubble.showHint?.(`🔧 处理：${text.slice(0, 30)}`, 2500);
+          reply = await this.chat(text); // GLM + 工具链
+        }
         if (reply && this._voiceActive && this.doubao?.active) {
           this.doubao.say?.(reply); // 豆包音色播结果
           this.bubble.showText(reply, Math.max(4000, reply.length * 120));
@@ -665,6 +683,67 @@ class PetController {
         if (this._voiceActive && this.doubao?.active) this._emitVoiceState('listening');
       }
     })();
+  }
+
+  /**
+   * 行动回路（CUA 式 act-and-verify）：任务 → 截屏 → 定位 → 执行 → 验证 → 重试
+   * 触发：指令是"操作类"（点/关/拖/输入 到屏幕目标），区别于"看屏类"（只描述）。
+   * 最多 maxSteps 轮，每轮重新截屏（屏幕会变化），失败换坐标重试。
+   * 返回：成功与否的自然语言汇报（供豆包代播）。
+   */
+  _isScreenAction(text) {
+    return /(点|点击|单击|双击|右键|关掉|关闭|按下|勾选|选择|拖|输入|填).{0,20}(它|那个|这个|按钮|弹窗|窗口|选项|框|图标|位置|搜索|输入)|帮我(点|关|拖|选|填|处理)|(点|关)一下(它|那个)|在.{0,12}(里|中|上面).{0,6}(输入|填|写)/.test(text);
+  }
+
+  async _screenActionLoop(task) {
+    const MAX_STEPS = 4;
+    this.bubble.showHint?.('🎯 开始操作…', 2000);
+    for (let step = 1; step <= MAX_STEPS; step++) {
+      try {
+        // 1) 感知：截屏 + 定位目标 + 判断当前状态
+        const b64 = window.screenAPI?.getScreenshot ? await window.screenAPI.getScreenshot() : null;
+        if (!b64) return '截屏失败，没法操作屏幕';
+        const img = 'data:image/png;base64,' + b64;
+        const analysis = await this.llm.vision(img,
+          `任务："${task}"。这是当前屏幕截图（第${step}轮）。严格JSON回答：
+{"done": bool(任务是否已完成——对比任务目标判断),
+ "target": {"name":"要操作元素名", "x":0-1000, "y":0-1000, "action":"click|dblclick|rclick|type|none"},
+ "type_text": "action=type 时要输入的文字",
+ "status": "20字内描述当前画面状态"}`,
+          'image/png');
+        const m = String(analysis || '').match(/\{[\s\S]*\}/);
+        if (!m) return `第${step}轮看不懂屏幕，放弃了。任务：${task}`;
+        const j = JSON.parse(m[0]);
+        // 2) 完成 → 汇报成功
+        if (j.done) {
+          return step === 1 ? `搞定啦！${j.status}` : `搞定啦（${step}轮）！${j.status}`;
+        }
+        // 3) 无目标无动作 → 报告卡住
+        if (!j.target || j.target.action === 'none') {
+          if (step >= MAX_STEPS) return `试了${step}轮还是不知道怎么操作：${j.status}`;
+          continue; // 再看一眼（屏幕可能在动）
+        }
+        // 4) 行动：坐标换算 + 执行
+        const px = Math.round((j.target.x / 1000) * screen.width);
+        const py = Math.round((j.target.y / 1000) * screen.height);
+        const act = j.target.action;
+        let actDesc = act === 'click' ? '点击' : act === 'dblclick' ? '双击' : act === 'rclick' ? '右键' : '输入';
+        this.bubble.showHint?.(`🖱 ${actDesc} ${j.target.name} (${px},${py}) · 第${step}轮`, 2000);
+        if (act === 'click') await window.windowAPI.invokeTool('click-at', { x: px, y: py });
+        else if (act === 'dblclick') await window.windowAPI.invokeTool('mouse-dblclick', { x: px, y: py });
+        else if (act === 'rclick') await window.windowAPI.invokeTool('mouse-rightclick', { x: px, y: py });
+        else if (act === 'type') {
+          await window.windowAPI.invokeTool('click-at', { x: px, y: py });
+          await new Promise(r => setTimeout(r, 400));
+          await window.windowAPI.invokeTool('type-text', { text: String(j.type_text || '') });
+        }
+        await new Promise(r => setTimeout(r, 900)); // 等界面响应，下一轮截屏验证
+      } catch (e) {
+        console.warn('[PetController] 行动回路异常:', e?.message);
+        if (step >= MAX_STEPS) return `操作出错了：${e?.message || '未知'}`;
+      }
+    }
+    return `试了${MAX_STEPS}轮没完成，我先停了（怕乱点）。你可以再说得更具体些～`;
   }
 
   /** 屏幕相关请求判定（触发实时截屏分析） */
