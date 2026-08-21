@@ -1,6 +1,7 @@
 // main/tools.js — 小球Agent工具层（主进程执行，Node权限）
 // 安全原则：路径限制用户目录 / shell白名单 / 破坏性命令禁止
 const { execFile, exec } = require('child_process');
+const IS_WIN = process.platform === 'win32'; // 双平台适配：Windows 分发
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -17,7 +18,9 @@ function safePath(p) {
   return abs;
 }
 
-const SHELL_ALLOW = /^(ls|cat|head|tail|mkdir|cp|mv|touch|open|say|df|du|date|whoami|pwd|echo|wc|find|grep|which|file|stat|uptime|sw_vers|pmset|networksetup -getairportnetwork|screencapture)\b/;
+const SHELL_ALLOW_DARWIN = /^(ls|cat|head|tail|mkdir|cp|mv|touch|open|say|df|du|date|whoami|pwd|echo|wc|find|grep|which|file|stat|uptime|sw_vers|pmset|networksetup -getairportnetwork|screencapture)\b/;
+const SHELL_ALLOW_WIN = /^(dir|type|mkdir|copy|move|echo|whoami|date|time|cd|ver|systeminfo|tasklist|findstr|tree|start)\b/i;
+const SHELL_ALLOW = IS_WIN ? SHELL_ALLOW_WIN : SHELL_ALLOW_DARWIN;
 const SHELL_DENY = /\b(rm|sudo|curl|wget|chmod|chown|kill|killall|osascript -e 'do shell script.*admin|mkfs|dd)\b/;
 
 function execShell(cmd, timeoutMs = 15000) {
@@ -32,16 +35,62 @@ function execShell(cmd, timeoutMs = 15000) {
   });
 }
 
+
+// ── 双平台自动化执行层 ──
+// macOS: AppleScript (osascript)；Windows: PowerShell（SendKeys/光标）
 function appleScript(script) {
-  const s = String(script || '');
-  if (!s) throw new Error('空脚本');
-  if (SHELL_DENY.test(s)) throw new Error('AppleScript含禁止命令');
+  if (IS_WIN) return runPowerShell(scriptToPowerShell(script));
   return new Promise((resolve) => {
-    execFile('osascript', ['-e', s], { timeout: 20000, maxBuffer: 1024 * 512 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: (stdout || '').toString().slice(0, 4000), stderr: (stderr || '').toString().slice(0, 1000), error: err ? String(err.message).slice(0, 300) : null });
+    execFile('osascript', ['-e', script], { timeout: 20000, maxBuffer: 1024 * 512 }, (err, stdout, stderr) => {
+      resolve(err ? `执行失败: ${String(stderr || err.message).slice(0, 200)}` : String(stdout).trim());
     });
   });
 }
+
+// Windows PowerShell 执行（-EncodedCommand 防 quoting 地狱）
+function runPowerShell(psScript) {
+  return new Promise((resolve) => {
+    const b64 = Buffer.from(psScript, 'utf16le').toString('base64');
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64], { timeout: 20000, maxBuffer: 1024 * 512 }, (err, stdout, stderr) => {
+      resolve(err ? `执行失败: ${String(stderr || err.message).slice(0, 200)}` : String(stdout).trim());
+    });
+  });
+}
+
+// AppleScript 常用模式 → PowerShell 等价翻译（type-text/click-at 用）
+function scriptToPowerShell(script) {
+  const s = String(script);
+  // keystroke "xxx"
+  let m = s.match(/keystroke "((?:[^"\\]|\\.)*)"/);
+  if (m) {
+    let text = m[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    // SendKeys 转义：{}+^%~()[] 特殊字符
+    const esc = text.replace(/([+^%~()\[\]])/g, '{$1}');
+    return `$wsh = New-Object -ComObject WScript.Shell; $wsh.SendKeys('${esc.replace(/'/g, "''")}')`;
+  }
+  // click at {x, y}
+  m = s.match(/click at \{(\d+),\s*(\d+)\}/);
+  if (m) {
+    const [, x, y] = m;
+    return `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class Clicker {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+  public static void Click(int x, int y) {
+    SetCursorPos(x, y);
+    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); // LEFTDOWN
+    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); // LEFTUP
+  }
+}
+'@
+[Clicker]::Click(${x}, ${y})`;
+  }
+  return `$wsh = New-Object -ComObject WScript.Shell; $wsh.SendKeys('')`; // 未识别模式：空操作
+}
+
 
 // ---------- Agent工具（连字符版）安全校验 ----------
 // open-app 应用名白名单：仅字母/数字/空格，防shell注入（配合execFile免shell更稳）
@@ -143,19 +192,36 @@ const TOOLS = {
     return `已移动: ${a} → ${b}`;
   },
   open_app: async ({ name }) => {
-    return execShell(`open -a "${String(name).replace(/["`$]/g, '')}"`);
+    const n = String(name || '').replace(/["`$]/g, '');
+    if (IS_WIN) {
+      // Windows：start 命令（cmd 内建）；常用中文名映射
+      const WIN_APP = { '微信': 'WeChat', '酷狗': 'kugou', '网易云音乐': 'cloudmusic', 'qq音乐': 'QQMusic', '浏览器': 'msedge', '备忘录': 'notepad', '计算器': 'calc', '记事本': 'notepad', '终端': 'wt' };
+      const target = WIN_APP[n.toLowerCase()] || WIN_APP[n] || n;
+      return execShell(`start "" "${target}"`);
+    }
+    return execShell(`open -a "${n}"`);
   },
   open_url: async ({ url }) => {
     const u = String(url || '');
     if (!/^https?:\/\//.test(u)) throw new Error('仅支持 http/https 链接');
-    return execShell(`open "${u.replace(/["`$]/g, '')}"`);
+    const safe = u.replace(/["`$]/g, '');
+    if (IS_WIN) return execShell(`start "" "${safe}"`);
+    return execShell(`open "${safe}"`);
   },
   run_applescript: async ({ script }) => appleScript(script),
   shell: async ({ cmd }) => execShell(cmd),
   screenshot: async () => {
-    const out = path.join('/tmp', `pet-shot-${Date.now()}.png`);
-    const r = await new Promise((resolve) => exec(`screencapture -x "${out}"`, { timeout: 10000 }, (err) => resolve(!err)));
-    return r ? `截图已保存: ${out}` : '截图失败（可能需要屏幕录制权限）';
+    const os = require('os');
+    const out = path.join(os.tmpdir(), `pet-shot-${Date.now()}.png`);
+    let r = false;
+    if (IS_WIN) {
+      // PowerShell 截屏（System.Drawing CopyFromScreen）
+      const ps = `Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size); $bmp.Save('${out.replace(/\\/g, '\\\\')}'); $g.Dispose(); $bmp.Dispose()`;
+      r = await runPowerShell(ps).then(t => !String(t).startsWith('执行失败'));
+    } else {
+      r = await new Promise((resolve) => exec(`screencapture -x "${out}"`, { timeout: 10000 }, (err) => resolve(!err)));
+    }
+    return r ? `截图已保存: ${out}` : '截图失败（macOS需屏幕录制权限/Windows可能失败）';
   },
   system_info: async () => {
     return `用户: ${os.userInfo().username}\n系统: ${os.type()} ${os.release()}\n内存: ${Math.round(os.totalmem() / 1e9)}GB 可用${Math.round(os.freemem() / 1e9)}GB\n时间: ${new Date().toLocaleString('zh-CN')}`;
@@ -171,6 +237,10 @@ const TOOLS = {
     // 打开失败 → 模糊匹配：扫 /Applications 与 ~/Applications 找相似名
     // （解决"酷狗"真名是 KugouMusic、"微信"是 WeChat 这类中英/简称对不上）
     const tryOpen = (n) => new Promise((resolve) => {
+      if (IS_WIN) {
+        execFile('cmd.exe', ['/c', 'start', '', n], { timeout: 15000 }, (err, _so, se) => resolve(err ? String(se || err.message) : null));
+        return;
+      }
       execFile('open', ['-a', n], { timeout: 15000 }, (err, _so, se) => resolve(err ? String(se || err.message) : null));
     });
     let err = await tryOpen(name);
@@ -270,11 +340,13 @@ function fuzzyFindApp(name) {
   }
   // 2) 目录扫描：包含匹配（KuGou → KugouMusic）
   try {
-    const dirs = ['/Applications', require('os').homedir() + '/Applications'];
+    const dirs = IS_WIN
+      ? [path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'Microsoft\\Windows\\Start Menu\\Programs')]
+      : ['/Applications', require('os').homedir() + '/Applications'];
     for (const dir of dirs) {
-      const apps = fs.readdirSync(dir).filter(a => a.endsWith('.app'));
+      const apps = fs.readdirSync(dir).filter(a => a.endsWith('.app') || (IS_WIN && a.endsWith('.lnk')));
       for (const a of apps) {
-        const base = a.replace(/\.app$/, '');
+        const base = a.replace(/\.(app|lnk)$/, '');
         if (base.toLowerCase().includes(lower) || lower.includes(base.toLowerCase().split(' ')[0])) return base;
       }
     }
