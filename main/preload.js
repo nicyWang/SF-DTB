@@ -72,6 +72,8 @@ ipcRenderer.on('voice-toggle', () => {
 });
 
 contextBridge.exposeInMainWorld('windowAPI', {
+  // 打开开发者控制台（右键菜单入口）
+  openDevtools() { try { ipcRenderer.send('pet-open-devtools'); } catch (e) {} },
   // 拖动窗口：渲染进程在mousedown/mousemove中调用，传event.screenX/screenY
   moveWindow(screenX, screenY) {
     ipcRenderer.send('window-move', { screenX, screenY });

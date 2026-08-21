@@ -75,6 +75,11 @@ class DoubaoRealtime {
   }
 
   async _startInner(handlers = {}) {
+    // 打断开关（设置页 pet-doubao-realtime-config.bargein，默认开）
+    try {
+      const cfg = DoubaoRealtime.loadConfig(this.storage);
+      this._bargein = cfg.bargein !== false;
+    } catch { this._bargein = true; }
     // 双保险：清掉任何残留监听与采集器（异常路径泄漏时）
     this._unbindAll();
     this._stopMic();
@@ -291,11 +296,23 @@ class DoubaoRealtime {
       const f32 = e.inputBuffer.getChannelData(0);
       const i16 = new Int16Array(f32.length);
       if (this._micMuted) {
-        // 她播报中：上行纯静音（零字节）。不用本地音量检测打断——
-        // 外放回声一旦超过阈值就误触发"假插嘴"→停播→回声上行→服务端
-        // 又回复→再触发……形成自我对话循环（= 听到的持续叠加）。
-        // 打断方式：点麦克风/⌘⇧空格挂断（stopVoiceChat）。
-        // 此为参考实现推荐的"硬件分离"方案：播放时静默录制，绝对稳定。
+        // 她播报中：上行纯静音（防回声环）。打断开关（bargein，设置页可配）开启时，
+        // 恢复本地音量打断检测：连续4帧强人声(rms>0.2)→真插嘴→停播恢复收音。
+        // 外放回声一般达不到 0.2 且不连续；耳机环境零误触发。
+        if (this._bargein) {
+          let sum = 0;
+          for (let i = 0; i < f32.length; i++) sum += f32[i] * f32[i];
+          const rms = Math.sqrt(sum / f32.length);
+          this._loudRun = rms > 0.2 ? (this._loudRun || 0) + 1 : 0;
+          if (this._loudRun >= 4) {
+            this._loudRun = 0;
+            console.log('[DoubaoRealtime] 插嘴确认(rms=' + rms.toFixed(2) + ') → 停播');
+            this._unmuteNow();
+            this._flushPlayback();
+            this._handlers.onInterrupt?.();
+            this._handlers.onState?.('listening');
+          }
+        }
         i16.fill(0);
       } else {
         for (let i = 0; i < f32.length; i++) {
