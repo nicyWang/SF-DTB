@@ -21,6 +21,13 @@ const DEFAULTS = {
 
 const VALID_SCENES = ['work', 'fun', 'slack', 'rest', 'unknown'];
 
+// ---------- 场景理解引擎（Scene Engine）参数 ----------
+const WINDOW_SIZE = 6;              // 滑动窗口：最近 N 次观察
+const STABLE_MIN = 4;               // 窗口内 ≥4 次相同变化模式 → 稳定
+const IDLE_MS = 2 * 60 * 1000;      // 连续无变化超 2 分钟 → idle
+// 免打扰场景标签（外部经 setSceneHint 注入，命中即 DND）
+const DND_SCENES = ['meeting', 'video', 'presentation', 'dnd', 'late_night'];
+
 const SCENE_LABELS = {
   work: '工作', fun: '娱乐', slack: '摸鱼', rest: '休息',
   unknown: '未知', late_night: '深夜',
@@ -78,6 +85,11 @@ class PerceptionService {
     this._lastRecordAt = {};        // scene -> 上次记忆记录时间戳
     this._mockIndex = 0;
 
+    // 场景理解引擎状态
+    this._observations = [];        // 滑动窗口：[{hash, ts, changed}]
+    this._lastHash = null;          // 上一次观察的截屏指纹
+    this._sceneHint = null;         // 外部注入的场景标签（LLM/截屏分析调用）
+
     // 全局事件接入（T10托盘 / 设置面板联动）
     if (this.events) {
       this.events.on('perception:paused', (p) => this._onPaused(p));
@@ -123,6 +135,72 @@ class PerceptionService {
     };
   }
 
+  // ---------- 场景理解引擎（纯逻辑，不依赖Electron运行时） ----------
+
+  /**
+   * 喂入一次截屏指纹观察。内部维护最近 WINDOW_SIZE(=6) 次观察的滑动窗口。
+   * @param {string} screenHash 截屏指纹（如 perceptual hash 字符串）
+   * @param {number} [ts] 观察时间戳ms（缺省用内部时钟）
+   */
+  observe(screenHash, ts) {
+    const t = typeof ts === 'number' ? ts : this._now();
+    const changed = this._lastHash !== null && screenHash !== this._lastHash;
+    this._observations.push({ hash: screenHash, ts: t, changed });
+    if (this._observations.length > WINDOW_SIZE) {
+      this._observations.splice(0, this._observations.length - WINDOW_SIZE);
+    }
+    this._lastHash = screenHash;
+    this._lastObserveAt = t;
+  }
+
+  /**
+   * 当前稳定场景。
+   * 判定规则（按优先级）：
+   *   1) idle：窗口内观察全部 hash 相同，且首末跨度超 2 分钟
+   *   2) 稳定：窗口内 ≥4 次相同变化模式（changed 全 true 或全 false）
+   *   3) 其他：'active'
+   * @returns {'idle'|'stable'|'active'} 场景名
+   */
+  getStableScene() {
+    const obs = this._observations;
+    if (obs.length === 0) return 'active';
+
+    // idle：连续几乎无变化（hash全相等）且持续超 IDLE_MS
+    const allSame = obs.every((o) => o.hash === obs[0].hash);
+    if (allSame && obs[obs.length - 1].ts - obs[0].ts > IDLE_MS) return 'idle';
+
+    // 稳定：≥4 次相同变化模式
+    const trueCnt = obs.filter((o) => o.changed).length;
+    if (trueCnt >= STABLE_MIN || obs.length - trueCnt >= STABLE_MIN) return 'stable';
+
+    return 'active';
+  }
+
+  /**
+   * 免打扰（Do Not Disturb）判定。
+   * @param {string} [externalScene] 可选外部场景标签（如 'meeting'/'video'）
+   * @returns {boolean} true 表示当前应免打扰
+   */
+  isDnd(externalScene) {
+    const label = externalScene !== undefined ? externalScene : this._sceneHint;
+    if (label && DND_SCENES.includes(label)) return true;
+    // 引擎自身的稳定 idle（挂机）不打扰；深夜同样免打扰
+    return this.getStableScene() === 'idle';
+  }
+
+  /**
+   * 注入场景标签（由 LLM 场景识别或截屏分析调用）。
+   * @param {string|null} label 如 'meeting'/'video'/'work'；传 null 清除
+   */
+  setSceneHint(label) {
+    this._sceneHint = label ?? null;
+  }
+
+  /** 读取当前场景标签（未注入返回 null） */
+  getSceneHint() {
+    return this._sceneHint;
+  }
+
   // ---------- 内部：循环调度 ----------
 
   _schedule(delay) {
@@ -153,8 +231,13 @@ class PerceptionService {
       } else {
         const b64 = await this._capture();
         if (b64) {
+          // 场景引擎：喂入截屏指纹（取base64前64字符作为轻量指纹）
+          this.observe(b64.slice(0, 64), this._now());
           const reply = await this.llm.vision(b64, SCENE_PROMPT);
           result = this._parseSceneReply(reply);
+          if (result && VALID_SCENES.includes(result.scene)) {
+            this.setSceneHint(result.scene); // LLM 场景结果同步为 hint
+          }
         }
       }
       if (result && this._enabled && !this._paused) {
@@ -256,4 +339,4 @@ class PerceptionService {
 }
 
 export default PerceptionService;
-export { PerceptionService, CONFIG_KEY, SCENE_PROMPT, VALID_SCENES };
+export { PerceptionService, CONFIG_KEY, SCENE_PROMPT, VALID_SCENES, WINDOW_SIZE, STABLE_MIN, IDLE_MS, DND_SCENES };
