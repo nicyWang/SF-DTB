@@ -373,7 +373,9 @@ class PetController {
         const hasTools = !!(window.windowAPI && window.windowAPI.invokeTool
           && typeof this.llm.chatWithTools === 'function');
         if (hasTools) {
-          reply = await this.llm.chatWithTools(messages, TOOL_SPECS,
+          // 工具铁律：防止历史"已打开"类回复让模型以为无需调用（记忆污染免疫）
+          const toolRule = { role: 'system', content: '【工具使用铁律】你不能直接改变电脑状态，必须调用工具真实执行；历史里说过"已打开/已完成"不代表现在完成了，主人再次要求就重新调用。不调工具就说"已完成"是撒谎。【工具选择规则】打开/启动应用→立即用 open-app（appName填应用名如"备忘录"对应Notes、"微信"对应WeChat，不要去找文件！应用不在文件夹里）；设置提醒→set-reminder；发消息→wechat-send；看目录→list-dir；点界面元素→ui-click；输入文字→type-text/ui-set；组合键→hotkey-text。选错工具=任务失败。' };
+          reply = await this.llm.chatWithTools([...messages, toolRule], TOOL_SPECS,
             // 工具执行器：IPC到主进程
             async (name, args) => {
               const r = await window.windowAPI.invokeTool(name, args);

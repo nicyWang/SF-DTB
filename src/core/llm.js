@@ -103,8 +103,46 @@ class LLMService {
       const data = await res.json();
       const msg = data?.choices?.[0]?.message;
       if (!msg) return '（模型返回空，请重试）';
-      const toolCalls = msg.tool_calls;
-      // 无工具调用 → 最终文本回复
+      let toolCalls = msg.tool_calls;
+      // 无工具调用 且 首轮 且 用户消息像操作指令 → glm-4-flash 工具多时"选择困难"不发起；
+      // 二阶段：tool_choice:'required' 强制重试一次（判断该不该调由意图启发式把关）
+      if ((!toolCalls || !toolCalls.length) && round === 0) {
+        const lastUser = String((msgs[msgs.length - 1] || {}).content || '');
+        const looksLikeAction = /(打开|关闭|关掉|点|按|输入|填|发送|发|提醒|闹钟|看看|列出|读取|写入|移动|整理|截屏|截图|滚|拖)/.test(lastUser);
+        if (looksLikeAction) {
+          try {
+            const res2 = await fetch(this._url('/chat/completions'), {
+              method: 'POST',
+              headers: this._headers(),
+              body: JSON.stringify({ model: this.config.model, messages: msgs, tools, tool_choice: 'required' }),
+            });
+            if (res2.ok) {
+              const data2 = await res2.json();
+              const msg2 = data2?.choices?.[0]?.message;
+              if (msg2?.tool_calls?.length) {
+                // 用强制结果继续（把 msg 换成 msg2）
+                msgs.push({ role: 'assistant', content: msg2.content || '', tool_calls: msg2.tool_calls });
+                for (const tc of msg2.tool_calls) {
+                  const name = tc?.function?.name;
+                  let args = {};
+                  try { args = JSON.parse(tc.function.arguments || '{}'); } catch (e) { /* ignore */ }
+                  if (typeof onToolCall === 'function') { try { onToolCall(name, args); } catch (e) { /* ignore */ } }
+                  let toolResult;
+                  try {
+                    const r = await executor(name, args);
+                    toolResult = typeof r === 'string' ? r : JSON.stringify(r);
+                  } catch (err) {
+                    toolResult = `工具执行错误: ${err.message || err}`;
+                  }
+                  if (toolResult.length > 6000) toolResult = toolResult.slice(0, 6000) + '...（截断）';
+                  msgs.push({ role: 'tool', tool_call_id: tc.id, content: String(toolResult) });
+                }
+                continue; // 带工具结果进入下一轮
+              }
+            }
+          } catch (e) { /* required 重试失败→按无工具处理 */ }
+        }
+      }
       if (!toolCalls || !toolCalls.length) {
         const content = typeof msg.content === 'string' ? msg.content
           : (Array.isArray(msg.content) ? msg.content.map(p => p?.text || '').join('') : '');
