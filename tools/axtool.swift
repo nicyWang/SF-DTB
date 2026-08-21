@@ -113,9 +113,18 @@ if cmd == "axclick" {
   let interactable = ["AXButton", "AXCheckBox", "AXRadioButton", "AXTab", "AXMenuItem", "AXPopUpButton", "AXToolbarButton", "AXLink", "AXTextField", "AXSearchField", "AXTextView", "AXComboBox", "button", "checkBox", "radioButton", "tab", "menuItem", "popUpButton", "toolbarButton", "link", "textField", "searchField", "textView"]
   if els.isEmpty { print("err:empty-tree"); exit(4) }
   var printed = 0
+  var idx = 0
   for e in els where interactable.contains(e.role) {
-    let line = "\(e.role)|\(e.title.prefix(40))|\(Int(e.frame.midX)),\(Int(e.frame.midY))"
+    var traits = ""
+    var selAny: CFTypeRef?; AXUIElementCopyAttributeValue(e.ref, kAXSelectedAttribute as CFString, &selAny)
+    if selAny as? Bool == true { traits += " [selected]" }
+    var expAny: CFTypeRef?; AXUIElementCopyAttributeValue(e.ref, kAXExpandedAttribute as CFString, &expAny)
+    if expAny as? Bool == true { traits += " [expanded]" }
+    var enAny: CFTypeRef?; AXUIElementCopyAttributeValue(e.ref, kAXEnabledAttribute as CFString, &enAny)
+    if enAny as? Bool == false { traits += " [disabled]" }
+    let line = "[\(idx)] \(e.role) \(e.title.prefix(40))\(traits) @\(Int(e.frame.midX)),\(Int(e.frame.midY))"
     if filter.isEmpty || line.lowercased().contains(filter) { print(line); printed += 1 }
+    idx += 1
   }
   if printed == 0 { print("err:no-match|total=\(els.count)") }
 } else { print("err:unknown"); exit(1) }

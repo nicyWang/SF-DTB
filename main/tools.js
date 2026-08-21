@@ -463,7 +463,13 @@ TOOLS['ui-click'] = async ({ name, app }) => {
       }
     } catch { /* ignore */ }
   }
-  const axArgs = ['axclick', n];
+  let axArgs;
+  if (Number.isInteger(args?.index) && args.index >= 0) {
+    // 按索引点击（Codex 式）：与 ui-list 输出的 [N] 对齐，坐标由执行器自查——零传递误差
+    axArgs = ['axclick', '--idx', String(args.index)];
+  } else {
+    axArgs = ['axclick', n];
+  }
   if (pid) axArgs.push('--pid', String(pid));
   const r = await runAx(axArgs);
   const rs = String(r);
