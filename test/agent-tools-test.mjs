@@ -42,9 +42,6 @@ await test('非法：空/非字符串/超长', () => {
   assert.ok(!isValidAppName(123));
   assert.ok(!isValidAppName('x'.repeat(101)));
 });
-await test('中文应用名被拒（白名单仅ASCII，防不可见字符绕过）', () => {
-  assert.ok(!isValidAppName('微信'));
-});
 
 console.log('== 2. list-dir 路径白名单 ==');
 await test('合法：~/Desktop 及其子目录、~开头简写、绝对路径', () => {
@@ -203,3 +200,11 @@ await test('IPC 日志记录调用', async () => {
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);
+
+// 中文应用名放行 + 注入仍拒（open-app 模糊匹配需求）
+test('中文应用名合法与注入拦截', () => {
+  assert.ok(isValidAppName('酷狗音乐') === true, '中文合法');
+  assert.ok(isValidAppName('Safari; rm -rf ~') === false, '分号注入拒');
+  assert.ok(isValidAppName('a && b') === false, '&&注入拒');
+  assert.ok(isValidAppName('a\nb') === false, '换行注入拒');
+});
