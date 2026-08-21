@@ -592,36 +592,42 @@ class PetController {
 
   /** 拿到完整用户语句 → chat → TTS 播报（可被打断）→ 继续听（打电话式循环） */
   /**
-   * 豆包实时模式·工具意图分流：
-   * 转写命中工具意图（提醒/打开应用/看目录）时，暂停豆包音频通道，
-   * 改走 GLM+function-calling 执行工具，结果用本地 TTS 播报；完成后恢复豆包会话。
-   * 非工具意图不介入（保持豆包几百ms低延迟对话）。
+   * 豆包实时模式·智能工具分流（两段式）：
+   * 第一段：LLM 判断是否需要调工具（含理解口语化表达如"打开微信/看看桌面"）
+   *   - 纯聊天 → 不介入（豆包低延迟回复）
+   *   - 工具意图 → 先让豆包回一句"好的，我来处理"（用户听到即时响应）
+   * 第二段：GLM+function-calling 执行 → 结果由豆包音色代播
+   * 防抖：执行期间重复指令直接忽略
    */
   _maybeVoiceToolRoute(text) {
     if (!this._voiceActive || this._toolRouting) return;
-    // 本地意图检测（轻量正则，不打 LLM）
-    const TOOL_INTENT = /(提醒我|设个?提醒|定个?提醒|闹钟|打开.{1,12}(应用|app|safari|微信|访达|finder|备忘录|音乐|日历)|帮我打开|看看?(我)?(桌面|下载|文档|目录|文件夹)|列出?目录)/i;
-    if (!TOOL_INTENT.test(text)) return;
     this._toolRouting = true;
-    console.log('[PetController] 语音工具意图命中:', text);
     (async () => {
       try {
-        // 抑制豆包这一轮的回复播放（执行工具期间丢弃服务端音频）
+        // ── 第一段：LLM 意图判断（快，一次小请求）──
+        const needTool = await this._llmNeedTool(text);
+        if (!needTool) {
+          this._toolRouting = false;
+          return; // 纯聊天：不介入，豆包自己回复
+        }
+        // 工具意图：先让豆包即时应答一句（用户先听到响应）
+        this.doubao?.say?.(`好嘞，${this._ackPhrase(text)}`);
+        this._emitVoiceState('speaking');
+        // 等这句播完（估时）
+        await new Promise(r => setTimeout(r, 1600));
+        if (!this._voiceActive) return;
+        // ── 第二段：执行 ──
         this.doubao?.suppressAudio?.();
         this._emitVoiceState('thinking');
         this.bubble.showHint?.(`🔧 处理：${text.slice(0, 30)}`, 2500);
-        const reply = await this.chat(text); // GLM + 工具链（含气泡展示）
-        // 门面统一：工具结果由豆包音色代播（用户视角永远是"豆包"在回答）
-        if (reply && this._voiceActive) {
-          if (this.doubao?.active) {
-            this.doubao.say?.(reply); // ChatTTSText → 豆包直接合成播报
-            this.bubble.showText(reply, Math.max(4000, reply.length * 120));
-            // 等豆包播完（粗略按字数估时，期间保持 speaking 状态）
-            this._emitVoiceState('speaking');
-            await new Promise(r => setTimeout(r, Math.min(15000, 1500 + reply.length * 180)));
-          } else {
-            await this._speakReply(reply); // 豆包不在（降级VAD）用本地TTS
-          }
+        const reply = await this.chat(text); // GLM + 工具链
+        if (reply && this._voiceActive && this.doubao?.active) {
+          this.doubao.say?.(reply); // 豆包音色播结果
+          this.bubble.showText(reply, Math.max(4000, reply.length * 120));
+          this._emitVoiceState('speaking');
+          await new Promise(r => setTimeout(r, Math.min(15000, 1500 + reply.length * 180)));
+        } else if (reply) {
+          await this._speakReply(reply); // 降级链路
         }
       } catch (e) {
         console.warn('[PetController] 工具分流失败:', e?.message);
@@ -632,6 +638,35 @@ class PetController {
         if (this._voiceActive && this.doubao?.active) this._emitVoiceState('listening');
       }
     })();
+  }
+
+  /** LLM 意图判断：是否需要调用工具（理解口语化表达，10s超时默认false） */
+  async _llmNeedTool(text) {
+    try {
+      const r = await Promise.race([
+        this.llm.chat([
+          { role: 'system', content: '判断用户这句话是否需要在本机执行操作（工具）。工具类别：定时提醒/闹钟、打开应用、查看目录文件、读写移动文件、截屏、系统信息、执行自动化。纯聊天/问知识/闲聊/问天气→no。轻微模糊时→no（宁可漏不可误执行）。只回答 yes 或 no。' },
+          { role: 'user', content: text },
+        ]),
+        new Promise(res => setTimeout(() => res('no'), 10000)),
+      ]);
+      let ans = String(r || '').toLowerCase().includes('yes');
+      // 双保险：LLM 漏判时的强化正则（口语化变体兜底）
+      if (!ans) {
+        const RE = /(打开|启动|开一下|开个|我要用|我想用|帮我开).{0,12}(微信|safari|访达|finder|备忘录|音乐|日历|计算器|地图|邮件|照片|终端|浏览器|应用|app)|((看看|列出|整理|查查?|有什么).{0,8}(桌面|下载|文档|文件夹|目录|文件))|(提醒|闹钟|叫我|截屏|截图)/i;
+        ans = RE.test(text);
+      }
+      console.log('[PetController] 工具意图判断:', ans ? 'TOOL' : 'chat', '←', text.slice(0, 20));
+      return ans;
+    } catch { return false; }
+  }
+
+  /** 执行前的口头确认短语（按意图类型给自然的回应） */
+  _ackPhrase(text) {
+    if (/提醒|闹钟/.test(text)) return '我这就给你设个提醒～';
+    if (/打开|启动/.test(text)) return `我帮你打开${(text.match(/打开|启动(.{1,10}?)(应用|$)/) || [])[1] || ''}～`;
+    if (/桌|文件|目录|文件夹/.test(text)) return '我看看啊～';
+    return '我去处理一下～';
   }
 
   async _processVoiceText(text) {
