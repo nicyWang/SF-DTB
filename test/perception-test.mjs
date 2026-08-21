@@ -283,6 +283,116 @@ assert('缺llm抛TypeError', threw);
   assert('配置visionModel后生效', captured[3].body.model === 'glm-4v-flash', captured[3].body.model);
 }
 
+// ---------- 11. 场景理解引擎：observe + 窗口滑动 ----------
+{
+  const llm = makeLLM(() => JSON.stringify({ scene: 'work', confidence: 0.9, detail: 'x' }));
+  const p = new PerceptionService({ llm, now });
+  const t0 = clockMs;
+
+  // 逐个喂入8次观察 → 窗口只保留最近6次
+  for (let i = 0; i < 8; i++) p.observe('hash-' + i, t0 + i * 1000);
+  assert('窗口滑动只保留最近6次', p._observations.length === 6 && p._observations[0].hash === 'hash-2' && p._observations[5].hash === 'hash-7', JSON.stringify(p._observations.map((o) => o.hash)));
+  assert('窗口内changed标记正确', p._observations.every((o) => o.changed === true));
+  p.stop();
+}
+
+// ---------- 12. 稳定判定：≥4次相同变化模式 → stable ----------
+{
+  const llm = makeLLM(() => JSON.stringify({ scene: 'work', confidence: 0.9, detail: 'x' }));
+  const p = new PerceptionService({ llm, now });
+  const t0 = clockMs;
+
+  // 连续变化6次（每次hash不同，间隔30s，总跨度未超idle条件）→ stable
+  for (let i = 0; i < 6; i++) p.observe('h-' + i, t0 + i * 30000);
+  assert('6次连续变化→stable', p.getStableScene() === 'stable', p.getStableScene());
+
+  // 6次完全无变化但跨度仅90s（≤2分钟）→ 不idle，但 changed全false ≥4 → stable
+  const p2 = new PerceptionService({ llm, now });
+  for (let i = 0; i < 6; i++) p2.observe('same', t0 + i * 15000);
+  assert('短时间无变化→stable(非idle)', p2.getStableScene() === 'stable', p2.getStableScene());
+  p.stop(); p2.stop();
+}
+
+// ---------- 13. idle判定：hash全等且超2分钟 ----------
+{
+  const llm = makeLLM(() => JSON.stringify({ scene: 'work', confidence: 0.9, detail: 'x' }));
+  const p = new PerceptionService({ llm, now });
+  const t0 = clockMs;
+
+  // 6次相同hash，间隔30s，跨度150s > 120s → idle
+  for (let i = 0; i < 6; i++) p.observe('frozen', t0 + i * 30000);
+  assert('无变化超2分钟→idle', p.getStableScene() === 'idle', p.getStableScene());
+
+  // 恰好120s边界（=2分钟，不严格大于）→ 非idle
+  const p2 = new PerceptionService({ llm, now });
+  for (let i = 0; i < 6; i++) p2.observe('frozen', t0 + i * 24000);
+  assert('跨度恰好2分钟不算idle', p2.getStableScene() !== 'idle', p2.getStableScene());
+  p.stop(); p2.stop();
+}
+
+// ---------- 14. 混合变化模式 → active ----------
+{
+  const llm = makeLLM(() => JSON.stringify({ scene: 'work', confidence: 0.9, detail: 'x' }));
+  const p = new PerceptionService({ llm, now });
+  const t0 = clockMs;
+
+  // 变化模式 3变3不变（F,T,F,T,F,T）→ true/false 各3，无 ≥4 多数 → active
+  const pattern = ['a', 'b', 'b', 'c', 'c', 'd'];
+  pattern.forEach((h, i) => p.observe(h, t0 + i * 30000));
+  assert('混合模式→active', p.getStableScene() === 'active', p.getStableScene());
+
+  // 空窗口 → active
+  const p2 = new PerceptionService({ llm, now });
+  assert('空窗口→active', p2.getStableScene() === 'active');
+  p.stop(); p2.stop();
+}
+
+// ---------- 15. DND判定 ----------
+{
+  const llm = makeLLM(() => JSON.stringify({ scene: 'work', confidence: 0.9, detail: 'x' }));
+  const p = new PerceptionService({ llm, now });
+  const t0 = clockMs;
+
+  // 外部会议标签 → DND
+  assert('外部标签meeting→DND', p.isDnd('meeting') === true);
+  assert('外部标签video→DND', p.isDnd('video') === true);
+  // 非DND标签
+  assert('外部标签work→非DND', p.isDnd('work') === false);
+  // 无hint、非idle → 非DND
+  assert('无hint非idle→非DND', p.isDnd() === false);
+
+  // 注入hint后 isDnd() 生效
+  p.setSceneHint('meeting');
+  assert('setSceneHint(meeting)后isDnd()', p.isDnd() === true);
+  assert('getSceneHint可读', p.getSceneHint() === 'meeting');
+  // 显式外部参数覆盖hint
+  assert('显式参数覆盖hint', p.isDnd('work') === false);
+  p.setSceneHint(null);
+  assert('清除hint后非DND', p.isDnd() === false && p.getSceneHint() === null);
+
+  // 引擎idle（挂机）→ DND
+  const p2 = new PerceptionService({ llm, now });
+  for (let i = 0; i < 6; i++) p2.observe('frozen', t0 + i * 30000);
+  assert('引擎idle→DND', p2.isDnd() === true);
+  p.stop(); p2.stop();
+}
+
+// ---------- 16. tick集成：截图自动喂observe + hint同步 ----------
+{
+  const bus = new Bus();
+  let call = 0;
+  // 每次vision返回不同截屏 → mock screenAPI 每次返回不同base64
+  const screen = { getScreenshot: async () => 'iVBORw0KGgoAAAANSUhEUg' + String(call).padStart(4, '0') + 'A'.repeat(80) };
+  const llm = makeLLM(() => { call++; return JSON.stringify({ scene: 'work', confidence: 0.9, detail: '写代码' }); });
+  const p = new PerceptionService({ llm, events: bus, screenAPI: screen, interval: INT, now });
+  p.start();
+  await sleep(INT * 7 + 80); // 7+次tick
+  assert('tick自动observe(窗口=6)', p._observations.length === 6, `实际${p._observations.length}`);
+  assert('LLM场景同步为hint', p.getSceneHint() === 'work', p.getSceneHint());
+  assert('持续变化截图→stable', p.getStableScene() === 'stable', p.getStableScene());
+  p.stop();
+}
+
 // ---------- 汇总 ----------
 console.log(`\n===== 结果: ${pass} passed, ${fail} failed =====`);
 process.exit(fail ? 1 : 0);
