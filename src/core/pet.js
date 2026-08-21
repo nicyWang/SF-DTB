@@ -320,6 +320,36 @@ class PetController {
    * @param {string} userText
    * @returns {Promise<string>} 完整回复
    */
+  /**
+   * 依据对话内容推断情绪并应用（回复表情联动）。
+   * 词典匹配（零延迟零成本）：用户话优先（关心主人情绪→共情表情），否则按回复语义。
+   * 匹配不到→不改表情（保持当前/自然回落）。
+   */
+  _applyReplyEmotion(userText, reply) {
+    const txt = String(reply || '') + '||' + String(userText || '');
+    const rules = [
+      [/哈哈|嘻嘻|嘿嘿|好开心|太棒|厉害|真好|喜欢|逗我|笑死|有趣|可爱|么么|爱你|想我了吗/, 'happy'],
+      [/哇|天呐|太(强|好|厉害)|激动|兴奋|冲鸭|来了来了|马上|搞定|完成/, 'excited'],
+      [/难过|伤心|委屈|抱歉|对不起|可惜|遗憾|心疼|辛苦|累了|疲|压力|不开心|烦|难受/, 'sad'],
+      [/困|睡|晚安|早安|呵欠|打哈欠|揉眼睛|夜里|深夜/, 'sleepy'],
+      [/无聊|没意思|好闲|发呆|摸鱼|随便|都行|不知道该/, 'bored'],
+    ];
+    // 用户文本优先：主人开心→她 excited/happy；主人低落→她 sad(共情) 等
+    const u = String(userText || '');
+    const userRules = [
+      [/哈哈|嘻嘻|太好了|真棒|厉害|开心|好耶/, 'excited'],
+      [/难过|伤心|累|烦|压力|不开心|委屈|想哭|难受/, 'sad'],
+      [/晚安|睡了|困|早上好|早安/, u.includes('晚') || u.includes('困') || u.includes('睡') ? 'sleepy' : 'happy'],
+      [/你好|在吗|嗨|哈喽/, 'happy'],
+    ];
+    for (const [re, emo] of userRules) {
+      if (re.test(u)) { this.setEmotion(emo, 8000); return; }
+    }
+    for (const [re, emo] of rules) {
+      if (re.test(txt)) { this.setEmotion(emo, 8000); return; }
+    }
+  }
+
   async chat(userText) {
     const text = String(userText || '').trim();
     if (!text) return '';
@@ -419,10 +449,8 @@ class PetController {
           console.warn('[PetController] 知识提取失败:', e?.message));
       }
 
-      // 6. 回复完心情转好
-      if (this.state.emotion === 'normal' || this.state.emotion === 'sad') {
-        this.setEmotion('happy', 10000);
-      }
+      // 6. 表情联动：按对话内容推断情绪（词典匹配，覆盖主人情绪→共情+回复语义）
+      try { this._applyReplyEmotion(text, reply); } catch { /* ignore */ }
       return reply;
     } finally {
       this._chatting = false;
@@ -942,7 +970,21 @@ class PetController {
     console.log(`[self-pipe] 全链路耗时 ${Date.now() - t0}ms`);
     if (!this._voiceActive) return; // 会话已被用户终止
 
-    if (reply) await this._speakReply(reply);
+    // 病理文本清洗：错误文案（含HTTP状态码等）不该原样念给主人听，也不该把半截 JSON 念出来
+    const isErrText = /^(（.*(失败|错误|受限|不可用|稍后)|.*HTTP \d+.*）?$)/.test(String(reply || '').trim());
+    const clean = String(reply || '')
+      .replace(/\{[^{}]*"(index|finish_reason|choices|delta)"[^{}]*\}/g, '')  // 流中断残留的 SSE JSON 片段
+      .replace(/data:.*$/gm, '')
+      .trim();
+    if (isErrText || !clean) {
+      if (this._voiceActive) {
+        this.bubble.showHint?.('哎呀，我脑子刚才卡了一下，再说一次？', 2500);
+        await this._speakReply('哎呀，我刚才没反应过来，主人再说一次好不好');
+      }
+      if (!this._voiceActive) return;
+    } else {
+      if (reply) await this._speakReply(clean);
+    }
     if (!this._voiceActive) return;
 
     // 播报结束 → 继续听（循环对话）

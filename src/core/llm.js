@@ -237,9 +237,8 @@ class LLMService {
       if (buffer.trim()) handleEvent(buffer);
     } catch (err) {
       console.error('[LLMService] chatStream read error:', err);
-      const msg = this._friendlyError(err, null);
-      onChunk(msg);
-      return full + msg;
+      // 错误文案不进 onChunk（会被气泡展示+TTS念出"HTTP xxx"）——仅返回值携带，调用方清洗
+      return full + this._friendlyError(err, null);
     }
     return full;
   }
