@@ -108,6 +108,10 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'shell', description: '执行白名单shell命令（ls/cat/mkdir/cp/mv/open/say等）', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } } },
   { type: 'function', function: { name: 'screenshot', description: '截取全屏保存到/tmp（需要屏幕录制权限）', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'system_info', description: '获取系统信息（用户/内存/时间）', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'open-app', description: '打开macOS应用（安全版：应用名仅限字母数字空格，如 Safari / WeChat / Netease Music）', parameters: { type: 'object', properties: { appName: { type: 'string', description: '应用名' } }, required: ['appName'] } } },
+  { type: 'function', function: { name: 'list-dir', description: '列出目录内容（安全版：仅限 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy，最多50项）', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '如 ~/Desktop' } }, required: ['dirPath'] } } },
+  { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒：N分钟后提醒主人某事（到点会弹出通知）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数(1-720)' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },
+  { type: 'function', function: { name: 'cancel-reminder', description: '取消一个未触发的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } }, required: ['id'] } } },
 ];
 
 class PetController {
@@ -129,6 +133,7 @@ class PetController {
     this.knowledge = deps.knowledge || null; // 个人知识库（可选；对话提取+检索注入）
     this.doubao = deps.doubao || null; // 豆包端到端实时语音（可选；配置后优先于 VAD 链路）
     this.avatar = deps.avatar || null; // 火山实时数字人（可选；语音对话出镜）
+    this.perception = deps.perception || null; // 感知服务（可选；场景理解引擎+DND门控主动搭话）
 
     this.opts = { ...DEFAULTS, ...opts };
     this.characterId = isValidCharacterId(opts.characterId) ? opts.characterId : DEFAULT_CHARACTER_ID;
@@ -357,6 +362,8 @@ class PetController {
                 move_file: '整理文件', open_app: `打开 ${args?.name || '应用'}`,
                 open_url: '打开链接', run_applescript: '执行自动化',
                 shell: '执行命令', screenshot: '截屏', system_info: '看系统信息',
+                'open-app': `打开 ${args?.appName || '应用'}`, 'list-dir': '看看目录',
+                'set-reminder': '定提醒', 'cancel-reminder': '取消提醒',
               };
               this.bubble.showHint(`🔧 ${labels[name] || name}中…`);
             });
@@ -840,6 +847,13 @@ class PetController {
   /** 场景变化响应：基于真实屏幕内容的有动因主动交流（非随机刷屏） */
   _onSceneChange({ scene, confidence, detail } = {}) {
     if (!scene || scene === 'unknown') return;
+    // 场景理解引擎：LLM 识别结果注入为 hint（供 isDnd/getStableScene 使用）
+    this.perception?.setSceneHint?.(scene);
+    // DND 门控：会议/视频/演示/深夜 或 引擎判 idle → 本次不主动搭话
+    if (this.perception?.isDnd?.(scene)) {
+      console.log('[PetController] 免打扰场景，跳过主动搭话:', scene);
+      return;
+    }
     const now = Date.now();
     if (scene === this._lastSceneCommented) return;
     if (now - this._lastSceneCommentAt < this.opts.sceneCommentGapMs) return;

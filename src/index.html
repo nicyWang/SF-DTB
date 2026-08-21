@@ -362,6 +362,7 @@
         } catch {}
         return __doa(buf);
       };
+      const perception = new PerceptionService({ llm, memory });
       const pet = new PetController({ llm, memory, personality, live2d: sprite, bubble, voice, knowledge, doubao },
         { ...(FAST_IDLE ? { boredMs: 10000, sleepyMs: 20000, tickMs: 2000 } : {}), characterId: activeCharacter });
       await pet.init();
@@ -400,7 +401,6 @@
       });
 
       // ---- 4. 屏幕感知（perception.js 已自订阅 settings:updated 自动启停） ----
-      const perception = new PerceptionService({ llm, memory });
       // 默认开启（有动因主动交流的数据源）；设置面板可关
       {
         let percepCfg = readJSON('pet-perception-config');
