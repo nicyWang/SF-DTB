@@ -674,9 +674,19 @@ class VoiceService {
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
       const rms = Math.sqrt(sum / buf.length);
 
-      // ===== 打断模式（TTS 播报中，打电话式全双工） =====
-      // 播报期间继续收音，但要"更响+更持续"才算用户插嘴（防 TTS 漏音误触发）：
-      // 阈值×2.2 + 连续4帧（~240ms）
+      // ===== 外放回声防护（全时段） =====
+      // 主进程 afplay 播报中（豆包TTS/EdgeTTS），喇叭声音会进麦克风——
+      // 任何阈值都挡不住"她自己的声音"。播放期间 VAD 完全跳过判定，播完恢复。
+      if (this._ttsPlayingOutloud) {
+        this._intRun = 0;
+        this._vadSilentRun = 0;
+        this._loudRun = 0;
+        this._vadSpeechStarted = false; // 播放期不积累语音状态
+        this._vadSpeechChunks = [];
+        this._vadSilentChunks = [];
+        // 跳过本帧所有判定（含正常模式与打断模式）
+      } else
+      // ===== 打断模式（TTS 播报中） =====
       if (this._interruptArmed) {
         const I_THRESH = THRESH * 2.2;
         if (!this._vadSpeechStarted) {
@@ -940,12 +950,14 @@ class VoiceService {
     const cfg = readJSON(this.storage, VOICE_CONFIG_KEY, {});
     // onStart 先行（合成有网络耗时，口型/冻结等 UI 状态别等）
     opts.onStart?.();
+    this._ttsPlayingOutloud = true; // 外放中：VAD 跳过判定（防自声打断）
     const res = await ttsAPI.play({
       text: input,
       voice: opts.voice || cfg.edgeVoice || 'zh-CN-XiaoyiNeural',
       rate: typeof opts.rate === 'number' ? opts.rate : 0,
       pitch: typeof opts.pitch === 'number' ? opts.pitch : 0,
     }).catch(() => null);
+    this._ttsPlayingOutloud = false;
     if (!res || res.ok !== true || res.played !== true) return false;
     opts.onEnd?.();
     return res.interrupted === true ? 'interrupted' : 'full';
@@ -1009,7 +1021,9 @@ class VoiceService {
       const w = this._win();
       if (typeof w.ttsAPI?.playAudioFile !== 'function') return false;
       opts.onStart?.();
+      this._ttsPlayingOutloud = true; // 外放中：VAD 跳过判定（防自声打断）
       const r = await w.ttsAPI.playAudioFile({ audioBase64: chunks.join(''), format: 'mp3' }).catch(() => null);
+      this._ttsPlayingOutloud = false;
       if (!r || r.ok !== true || r.played !== true) return false;
       opts.onEnd?.();
       return true;
