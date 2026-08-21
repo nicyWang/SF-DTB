@@ -287,6 +287,76 @@ const TOOLS = {
   },
   // wechat-send: { contact, message } → 微信发消息（macOS：AppleScript UI 自动化）
   // 流程：打开微信 → 搜索联系人 → 进聊天 → 输入框打字 → 回车发送
+  // ══ 任务级工具（一句话直达，内部自己编排多步） ══
+  'tidy-desktop': async ({ dryRun }) => {
+    const pathMod = require('path');
+    const os = require('os');
+    const desk = pathMod.join(os.homedir(), 'Desktop');
+    const CAT = {
+      图片: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.svg', '.bmp'],
+      文档: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.md', '.csv', '.pages', '.numbers', '.key'],
+      安装包: ['.dmg', '.pkg', '.zip', '.rar', '.7z', '.tar', '.gz', '.ipa'],
+      视频: ['.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv'],
+      音频: ['.mp3', '.wav', '.aac', '.flac', '.m4a'],
+    };
+    const catOf = (name) => {
+      const ext = pathMod.extname(name).toLowerCase();
+      for (const [cat, exts] of Object.entries(CAT)) if (exts.includes(ext)) return cat;
+      return null;
+    };
+    let items;
+    try { items = fs.readdirSync(desk); } catch (e) { throw new Error('读桌面失败: ' + e.message); }
+    const moves = [];
+    for (const name of items) {
+      if (name.startsWith('.')) continue;
+      let st; try { st = fs.statSync(pathMod.join(desk, name)); } catch { continue; }
+      if (!st.isFile()) continue;
+      const cat = catOf(name);
+      if (cat) moves.push({ name, cat, dst: pathMod.join(desk, cat, name) });
+    }
+    if (dryRun) return JSON.stringify({ mode: '预览', 将移动: moves.length + '个', 明细: moves.map((m) => m.name + ' → ' + m.cat + '/').slice(0, 15) });
+    let done = 0; const errs = [];
+    for (const m of moves) {
+      try { fs.mkdirSync(pathMod.dirname(m.dst), { recursive: true }); fs.renameSync(pathMod.join(desk, m.name), m.dst); done++; }
+      catch (e) { errs.push(m.name); }
+    }
+    const byCat = {};
+    for (const m of moves) byCat[m.cat] = (byCat[m.cat] || 0) + 1;
+    return JSON.stringify({ 整理完成: done + '个文件', 分类: byCat, 失败: errs.slice(0, 5) });
+  },
+  'close-app': async ({ name }) => {
+    const n = String(name || '').trim();
+    if (!n) throw new Error('name 不能为空');
+    const APP_PROC = { '微信': 'WeChat', '酷狗': 'KugouMusic', '网易云': 'NeteaseMusic', 'QQ音乐': 'QQMusic', '备忘录': 'Notes', '浏览器': 'Safari', 'Safari': 'Safari', 'Chrome': 'Google Chrome', '计算器': 'Calculator', '日历': 'Calendar', '音乐': 'Music', '设置': 'System Settings', '终端': 'Terminal', '访达': 'Finder' };
+    const proc = APP_PROC[n] || n;
+    await new Promise((resolve) => {
+      execFile('osascript', ['-e', 'tell application "' + proc + '" to quit'], { timeout: 6000 }, () => resolve());
+    });
+    await new Promise((r) => setTimeout(r, 1200));
+    const alive = await new Promise((resolve) => {
+      execFile('pgrep', ['-x', proc], { timeout: 4000 }, (e, so) => resolve(!e && String(so).trim() !== ''));
+    });
+    if (alive) {
+      execFile('pkill', ['-x', proc], () => {});
+      await new Promise((r) => setTimeout(r, 800));
+      const alive2 = await new Promise((resolve) => {
+        execFile('pgrep', ['-x', proc], { timeout: 4000 }, (e, so) => resolve(!e && String(so).trim() !== ''));
+      });
+      if (alive2) throw new Error(proc + ' 关不掉（可能系统关键进程）');
+      return '已强制关闭 ' + proc;
+    }
+    return '已退出 ' + proc;
+  },
+  'web-search': async ({ query, engine }) => {
+    const q = String(query || '').trim();
+    if (!q) throw new Error('query 不能为空');
+    const enc = encodeURIComponent(q);
+    const eng = String(engine || 'baidu').toLowerCase();
+    const u = { baidu: 'https://www.baidu.com/s?wd=' + enc, bing: 'https://www.bing.com/search?q=' + enc, google: 'https://www.google.com/search?q=' + enc }[eng] || ('https://www.baidu.com/s?wd=' + enc);
+    execFile('open', [u], { timeout: 8000 }, () => {});
+    return '已在浏览器打开搜索: ' + q;
+  },
+
   // mic-energy: 采样~2秒麦克风输出 RMS（播放任务验证用：扬声器有声→麦克风拾到）
   'mic-energy': async () => {
     const { execFile } = require('child_process');
@@ -555,6 +625,9 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'cancel-reminder', description: '取消一个已设置的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } } }, required: ['id'] } },
   { type: 'function', function: { name: 'type-text', description: '在屏幕指定坐标点击后键盘输入文本（macOS Accessibility）。用于"在输入框里输入xx"类指令；x/y 可选（不给则在当前焦点处输入）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要输入的文本' }, x: { type: 'number', description: '目标输入框屏幕X坐标（视觉分析提供）' }, y: { type: 'number', description: '目标输入框屏幕Y坐标' } }, required: ['text'] } } },
   { type: 'function', function: { name: 'click-at', description: '点击屏幕坐标（默认静默：光标不动不抢鼠标；silent:false 则真移动光标）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'tidy-desktop', description: '整理桌面：自动按类型分类（图片/文档/安装包/视频/音频移入对应文件夹）。dryRun=true 先预览不移动', parameters: { type: 'object', properties: { dryRun: { type: 'boolean', description: 'true=只预览不实际移动' } }, required: [] } } },
+  { type: 'function', function: { name: 'close-app', description: '关闭应用（先温和退出，关不掉自动强制）', parameters: { type: 'object', properties: { name: { type: 'string', description: '应用名：微信/酷狗/网易云/备忘录/浏览器/Chrome/计算器/日历等' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'web-search', description: '浏览器搜索：自动打开浏览器查资料（默认百度，可选bing/google）', parameters: { type: 'object', properties: { query: { type: 'string' }, engine: { type: 'string', description: 'baidu/bing/google' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'wechat-send', description: '通过微信给指定联系人发消息（自动打开微信→搜索联系人→输入并发送）。要求：微信已在 Mac 登录。发送前必须先向主人复述联系人和消息内容获确认', parameters: { type: 'object', properties: { contact: { type: 'string', description: '联系人备注名或昵称（需与微信通讯录一致）' }, message: { type: 'string', description: '消息内容' } }, required: ['contact', 'message'] } } },
   { type: 'function', function: { name: 'mouse-move', description: '移动鼠标到屏幕坐标(不点击)', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
   { type: 'function', function: { name: 'mouse-dblclick', description: '双击屏幕坐标（打开文件/选中文本等）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },

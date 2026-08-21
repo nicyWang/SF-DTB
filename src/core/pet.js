@@ -112,6 +112,9 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'list-dir', description: '列出目录内容（安全版：仅限 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy，最多50项）', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '如 ~/Desktop' } }, required: ['dirPath'] } } },
   { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒：N分钟后提醒主人某事（到点会弹出通知）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数(1-720)' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },
   { type: 'function', function: { name: 'cancel-reminder', description: '取消一个未触发的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'tidy-desktop', description: '整理桌面：自动按类型分类（图片/文档/安装包/视频/音频移入对应文件夹）。dryRun=true 先预览不移动', parameters: { type: 'object', properties: { dryRun: { type: 'boolean', description: 'true=只预览不实际移动' } }, required: [] } } },
+  { type: 'function', function: { name: 'close-app', description: '关闭应用（先温和退出，关不掉自动强制）', parameters: { type: 'object', properties: { name: { type: 'string', description: '应用名：微信/酷狗/网易云/备忘录/浏览器/Chrome/计算器/日历等' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'web-search', description: '浏览器搜索：自动打开浏览器查资料（默认百度，可选bing/google）', parameters: { type: 'object', properties: { query: { type: 'string' }, engine: { type: 'string', description: 'baidu/bing/google' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'wechat-send', description: '通过微信给指定联系人发消息（自动开微信→搜索→输入→发送）。需微信已在Mac登录。调用前必须先向用户复述联系人与内容获得确认', parameters: { type: 'object', properties: { contact: { type: 'string', description: '联系人备注名/昵称' }, message: { type: 'string', description: '消息内容' } }, required: ['contact', 'message'] } } },
   { type: 'function', function: { name: 'mouse-move', description: '移动鼠标到屏幕坐标(不点击)', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
   { type: 'function', function: { name: 'mouse-dblclick', description: '双击屏幕坐标', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
@@ -404,7 +407,7 @@ class PetController {
           && typeof this.llm.chatWithTools === 'function');
         if (hasTools) {
           // 工具铁律：防止历史"已打开"类回复让模型以为无需调用（记忆污染免疫）
-          const toolRule = { role: 'system', content: '【工具使用铁律】你不能直接改变电脑状态，必须调用工具真实执行；历史里说过"已打开/已完成"不代表现在完成了，主人再次要求就重新调用。不调工具就说"已完成"是撒谎。【工具选择规则】打开/启动应用→立即用 open-app（appName填应用名如"备忘录"对应Notes、"微信"对应WeChat，不要去找文件！应用不在文件夹里）；设置提醒→set-reminder；发消息→wechat-send；看目录→list-dir；点界面元素→ui-click；输入文字→type-text/ui-set；组合键→hotkey-text。选错工具=任务失败。' };
+          const toolRule = { role: 'system', content: '【工具使用铁律】你不能直接改变电脑状态，必须调用工具真实执行；历史里说过"已打开/已完成"不代表现在完成了，主人再次要求就重新调用。不调工具就说"已完成"是撒谎。【工具选择规则】打开/启动应用→立即用 open-app（appName填应用名如"备忘录"对应Notes、"微信"对应WeChat，不要去找文件！应用不在文件夹里）；整理桌面→tidy-desktop（一步到位，别去逐个move_file）；设置提醒/闹钟→set-reminder；发消息→wechat-send；关闭应用→close-app；搜索资料→web-search；看目录→list-dir；点界面元素→ui-click；输入文字→type-text/ui-set；组合键→hotkey-text。选错工具=任务失败。' };
           reply = await this.llm.chatWithTools([...messages, toolRule], TOOL_SPECS,
             // 工具执行器：IPC到主进程
             async (name, args) => {
@@ -422,6 +425,7 @@ class PetController {
                 'open-app': `打开 ${args?.appName || '应用'}`, 'list-dir': '看看目录',
                 'set-reminder': '定提醒', 'cancel-reminder': '取消提醒',
                 'wechat-send': `给 ${args?.contact || '联系人'} 发微信`,
+                'tidy-desktop': '整理桌面', 'close-app': `关闭 ${args?.name || '应用'}`, 'web-search': `搜索 ${String(args?.query || '').slice(0, 10)}`,
                 'mouse-move': '移鼠标', 'mouse-dblclick': '双击', 'mouse-rightclick': '右键',
                 'ui-click': `点 ${args?.name || '元素'}`, 'ui-set': '填内容', 'ui-list': '看界面元素',
                 'mouse-drag': '拖拽', 'mouse-scroll': '滚动', 'key-press': '按键', 'hotkey-text': `按 ${args?.text || '快捷键'}`,
