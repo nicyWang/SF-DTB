@@ -686,6 +686,7 @@
 
       // ---- debug 状态浮层 ----
       // 调试引用（CDP/console 可直接操作各模块）
+      perception._ownerPetRef = pet; // 行动回路标志共享（_tick 检查 _screenLooping）
       window.liveRefs = { llm, memory, personality, sprite, bubble, perception, knowledge, doubao, avatar: avatarLive, getDanmaku: () => danmaku, getLiveMode: () => liveMode };
 
       if (DEBUG) {

@@ -220,6 +220,11 @@ class PerceptionService {
   async _tick() {
     this._timer = null;
     if (!this._enabled || this._paused) return;
+    // 行动回路运行中：跳过本轮感知（避免并发 vision 调用互相干扰/劫持）
+    if (this._ownerPetRef?._screenLooping) {
+      this._timer = setTimeout(() => { this._tick(); }, this.opts.interval);
+      return;
+    }
     this._lastCheckAt = this._now();
     let result = null;
     try {

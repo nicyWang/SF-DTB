@@ -696,7 +696,15 @@ class PetController {
   }
 
   async _screenActionLoop(task) {
+    this._screenLooping = true; // 感知模块 _tick 检查此标志，回路期间暂停 vision（防劫持/并发冲突）
+    try { return await this._screenActionLoopInner(task); }
+    finally { this._screenLooping = false; }
+  }
+
+  async _screenActionLoopInner(task) {
     const MAX_STEPS = 4;
+    let silentTries = 0; // 同一目标静默点击次数（2次无效自动降级真实点击——菜单栏等系统元素不响应AX）
+    let lastTarget = '';
     this.bubble.showHint?.('🎯 开始操作…', 2000);
     for (let step = 1; step <= MAX_STEPS; step++) {
       try {
@@ -705,11 +713,10 @@ class PetController {
         if (!b64) return '截屏失败，没法操作屏幕';
         const img = 'data:image/png;base64,' + b64;
         const analysis = await this.llm.vision(img,
-          `任务："${task}"。这是当前屏幕截图（第${step}轮）。严格JSON回答：
-{"done": bool(任务是否已完成——对比任务目标判断),
- "target": {"name":"要操作元素名", "x":0-1000, "y":0-1000, "action":"click|dblclick|rclick|type|none"},
- "type_text": "action=type 时要输入的文字",
- "status": "20字内描述当前画面状态"}`,
+          `任务："${task}"。当前屏幕截图（第${step}轮，此前已执行过${step - 1}次点击）。判定规则：
+- done=true 的条件：任务要求的界面元素已出现/已打开/目标面板已弹出/文字已输入可见。只要操作引发的界面变化已达成任务意图，就算完成（例：任务"点时间"→任何面板弹出即完成；任务"点XX按钮"→对应面板/状态出现即完成）。
+- 操作已产生明显界面变化但未见任务目标时：优先再点一次 target（坐标可修正）。
+严格JSON：{"done":bool, "target":{"name":"x","y":0-1000坐标,"action":"click|dblclick|rclick|type|none"}, "type_text":"", "status":"20字内画面状态"}`,
           'image/png');
         const m = String(analysis || '').match(/\{[\s\S]*\}/);
         if (!m) return `第${step}轮看不懂屏幕，放弃了。任务：${task}`;
@@ -718,22 +725,28 @@ class PetController {
         if (j.done) {
           return step === 1 ? `搞定啦！${j.status}` : `搞定啦（${step}轮）！${j.status}`;
         }
+        console.log(`[行动回路] 第${step}轮 done=false target=(${j.target?.x},${j.target?.y}) status=${j.status}`);
         // 3) 无目标无动作 → 报告卡住
         if (!j.target || j.target.action === 'none') {
           if (step >= MAX_STEPS) return `试了${step}轮还是不知道怎么操作：${j.status}`;
           continue; // 再看一眼（屏幕可能在动）
         }
-        // 4) 行动：坐标换算 + 执行
+        // 4) 行动：坐标换算 + 执行（静默优先；同目标2次静默无效→降级真实点击保完成率）
         const px = Math.round((j.target.x / 1000) * screen.width);
         const py = Math.round((j.target.y / 1000) * screen.height);
         const act = j.target.action;
+        const sameTarget = lastTarget === j.target.name;
+        silentTries = sameTarget ? silentTries + 1 : 0;
+        lastTarget = j.target.name;
+        const useSilent = silentTries < 2; // 前两次静默
         let actDesc = act === 'click' ? '点击' : act === 'dblclick' ? '双击' : act === 'rclick' ? '右键' : '输入';
+        if (act === 'click' && !useSilent) actDesc += '(真实)';
         this.bubble.showHint?.(`🖱 ${actDesc} ${j.target.name} (${px},${py}) · 第${step}轮`, 2000);
-        if (act === 'click') await window.windowAPI.invokeTool('click-at', { x: px, y: py });
+        if (act === 'click') await window.windowAPI.invokeTool('click-at', { x: px, y: py, silent: useSilent });
         else if (act === 'dblclick') await window.windowAPI.invokeTool('mouse-dblclick', { x: px, y: py });
         else if (act === 'rclick') await window.windowAPI.invokeTool('mouse-rightclick', { x: px, y: py });
         else if (act === 'type') {
-          await window.windowAPI.invokeTool('click-at', { x: px, y: py });
+          await window.windowAPI.invokeTool('click-at', { x: px, y: py, silent: true });
           await new Promise(r => setTimeout(r, 400));
           await window.windowAPI.invokeTool('type-text', { text: String(j.type_text || '') });
         }

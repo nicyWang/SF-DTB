@@ -371,9 +371,11 @@ TOOLS['mouse-move'] = async ({ x, y }) => {
   if (!vCoord(x) || !vCoord(y)) throw new Error('x/y 需为 0-10000 数字');
   return await runMouse(['move', Math.round(x), Math.round(y)]);
 };
-TOOLS['click-at'] = async ({ x, y }) => {
+TOOLS['click-at'] = async ({ x, y, silent = true }) => {
   if (!vCoord(x) || !vCoord(y)) throw new Error('x/y 需为 0-10000 数字');
-  return await runMouse(['click', Math.round(x), Math.round(y)]);
+  // silent（默认）：AX 静默按压（光标零移动，不抢主人鼠标）→ PostToPid 兜底 → 失败退普通点击
+  const mode = (silent && !IS_WIN) ? 'aclick' : 'click';
+  return await runMouse([mode, Math.round(x), Math.round(y)]);
 };
 TOOLS['mouse-dblclick'] = async ({ x, y }) => {
   if (!vCoord(x) || !vCoord(y)) throw new Error('x/y 需为 0-10000 数字');
@@ -431,7 +433,7 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒（到点弹给主人）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数（0<x≤43200）' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },
   { type: 'function', function: { name: 'cancel-reminder', description: '取消一个已设置的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } } }, required: ['id'] } },
   { type: 'function', function: { name: 'type-text', description: '在屏幕指定坐标点击后键盘输入文本（macOS Accessibility）。用于"在输入框里输入xx"类指令；x/y 可选（不给则在当前焦点处输入）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要输入的文本' }, x: { type: 'number', description: '目标输入框屏幕X坐标（视觉分析提供）' }, y: { type: 'number', description: '目标输入框屏幕Y坐标' } }, required: ['text'] } } },
-  { type: 'function', function: { name: 'click-at', description: '点击屏幕坐标（配合屏幕分析的目标位置执行点击，如关弹窗/按按钮）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'click-at', description: '点击屏幕坐标（默认静默：光标不动不抢鼠标；silent:false 则真移动光标）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
   { type: 'function', function: { name: 'wechat-send', description: '通过微信给指定联系人发消息（自动打开微信→搜索联系人→输入并发送）。要求：微信已在 Mac 登录。发送前必须先向主人复述联系人和消息内容获确认', parameters: { type: 'object', properties: { contact: { type: 'string', description: '联系人备注名或昵称（需与微信通讯录一致）' }, message: { type: 'string', description: '消息内容' } }, required: ['contact', 'message'] } } },
   { type: 'function', function: { name: 'mouse-move', description: '移动鼠标到屏幕坐标(不点击)', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
   { type: 'function', function: { name: 'mouse-dblclick', description: '双击屏幕坐标（打开文件/选中文本等）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
