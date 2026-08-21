@@ -285,12 +285,6 @@ const TOOLS = {
     const script = `${clickPart}tell application "System Events" to keystroke "${esc}"`;
     return await appleScript(script);
   },
-  // click-at: { x, y } → 点击屏幕坐标（配合视觉定位的目标）
-  'click-at': async ({ x, y }) => {
-    const validCoord = (v) => typeof v === 'number' && v >= 0 && v <= 10000;
-    if (!validCoord(x) || !validCoord(y)) throw new Error('x/y 需为 0-10000 的数字');
-    return await appleScript(`tell application "System Events" to click at {${Math.round(x)}, ${Math.round(y)}}`);
-  },
   // wechat-send: { contact, message } → 微信发消息（macOS：AppleScript UI 自动化）
   // 流程：打开微信 → 搜索联系人 → 进聊天 → 输入框打字 → 回车发送
   'wechat-send': async ({ contact, message }) => {
@@ -327,6 +321,99 @@ return "已发送"`;
   },
 };
 
+// ══ 虚拟鼠标键盘原语（操控电脑的"手"）——所有应用通用 ══
+// macOS: 自编译 Swift CGEvent 工具 bin/pet-mouse（build-mouse.sh 生成，零外部依赖）
+//        键盘类走 System Events（osascript，支持修饰键组合）
+// Windows: 翻译成 PowerShell（SendKeys / Win32 mouse_event）
+const MOUSE_BIN = path.join(__dirname, '..', 'bin', 'pet-mouse');
+const hasMouseBin = () => { try { fs.accessSync(MOUSE_BIN, fs.constants.X_OK); return true; } catch { return false; } };
+
+// 执行 pet-mouse（macOS 专用；Windows 走 winMouse）
+const runMouse = (args) => new Promise((resolve) => {
+  if (IS_WIN) return resolve(winMouse(args));
+  if (!hasMouseBin()) return resolve('执行失败: bin/pet-mouse 未编译（跑 ./build-mouse.sh）');
+  execFile(MOUSE_BIN, args.map(String), { timeout: 15000 }, (err, stdout, stderr) => {
+    resolve(err ? '执行失败: ' + String(stderr || err.message).slice(0, 150) : String(stdout).trim());
+  });
+});
+
+// Windows 鼠标原语（PowerShell + Win32）
+function winMouse(args) {
+  const [op, a, b, c, dd] = args;
+  const num = (v) => Number(v) || 0;
+  if (op === 'move' || op === 'click' || op === 'dblclick' || op === 'rclick') {
+    const btn = op === 'rclick' ? 'RIGHT' : 'LEFT';
+    const down = op === 'rclick' ? 0x0008 : 0x0002;
+    const up = op === 'rclick' ? 0x0010 : 0x0004;
+    let acts = `SetCursorPos(${num(a)}, ${num(b)})`;
+    if (op !== 'move') {
+      acts += `; mouse_event(${down},0,0,0,0); Start-Sleep -m 30; mouse_event(${up},0,0,0,0)`;
+      if (op === 'dblclick') acts += `; Start-Sleep -m 60; mouse_event(${down},0,0,0,0); Start-Sleep -m 30; mouse_event(${up},0,0,0,0)`;
+    }
+    void btn;
+    return runPowerShell(`Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class M{[DllImport("user32.dll")]public static extern bool SetCursorPos(int x,int y);[DllImport("user32.dll")]public static extern void mouse_event(uint f,uint dx,uint dy,uint d,UIntPtr e);}' ; [M]::${acts}`).then(() => 'ok');
+  }
+  if (op === 'drag') {
+    return runPowerShell(`Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class M{[DllImport("user32.dll")]public static extern bool SetCursorPos(int x,int y);[DllImport("user32.dll")]public static extern void mouse_event(uint f,uint dx,uint dy,uint d,UIntPtr e);}' ; [M]::SetCursorPos(${num(a)},${num(b)}); [M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); 1..15 | %{ [M]::SetCursorPos(${num(a)}+((${num(c)}-${num(a)})*$_/15), ${num(b)}+((${num(dd)}-${num(b)})*$_/15)); Start-Sleep -m 20 }; [M]::SetCursorPos(${num(c)},${num(dd)}); [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero)`).then(() => 'ok');
+  }
+  if (op === 'scroll') {
+    return runPowerShell(`Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class M{[DllImport("user32.dll")]public static extern void mouse_event(uint f,uint dx,uint dy,uint d,UIntPtr e);}' ; [M]::mouse_event(0x0800,0,${-num(a)},0,[UIntPtr]::Zero)`).then(() => 'ok');
+  }
+  return Promise.resolve('执行失败: 未知操作 ' + op);
+}
+
+const se = (inner) => `tell application "System Events"\n${inner}\nend tell`;
+const vCoord = (v) => typeof v === 'number' && v >= 0 && v <= 10000;
+const KEYCODES = { enter: 36, return: 36, escape: 53, esc: 53, tab: 48, space: 49, delete: 51, backspace: 51, up: 126, down: 125, left: 123, right: 124, home: 115, end: 119, pageup: 116, pagedown: 121, f1: 122, f2: 120, f3: 99, f4: 118, f5: 96, f6: 97, f7: 98, f8: 100, f9: 101, f10: 109, f11: 103, f12: 111 };
+const MODS = { shift: 'shift down', cmd: 'command down', command: 'command down', ctrl: 'control down', control: 'control down', alt: 'option down', option: 'option down' };
+
+TOOLS['mouse-move'] = async ({ x, y }) => {
+  if (!vCoord(x) || !vCoord(y)) throw new Error('x/y 需为 0-10000 数字');
+  return await runMouse(['move', Math.round(x), Math.round(y)]);
+};
+TOOLS['click-at'] = async ({ x, y }) => {
+  if (!vCoord(x) || !vCoord(y)) throw new Error('x/y 需为 0-10000 数字');
+  return await runMouse(['click', Math.round(x), Math.round(y)]);
+};
+TOOLS['mouse-dblclick'] = async ({ x, y }) => {
+  if (!vCoord(x) || !vCoord(y)) throw new Error('x/y 需为 0-10000 数字');
+  return await runMouse(['dblclick', Math.round(x), Math.round(y)]);
+};
+TOOLS['mouse-rightclick'] = async ({ x, y }) => {
+  if (!vCoord(x) || !vCoord(y)) throw new Error('x/y 需为 0-10000 数字');
+  return await runMouse(['rclick', Math.round(x), Math.round(y)]);
+};
+TOOLS['mouse-drag'] = async ({ fromX, fromY, toX, toY }) => {
+  if (!vCoord(fromX) || !vCoord(fromY) || !vCoord(toX) || !vCoord(toY)) throw new Error('坐标需 0-10000 数字');
+  return await runMouse(['drag', Math.round(fromX), Math.round(fromY), Math.round(toX), Math.round(toY)]);
+};
+TOOLS['mouse-scroll'] = async ({ deltaY = -300 }) => {
+  const dy = Math.max(-10000, Math.min(10000, Math.round(Number(deltaY) || 0)));
+  if (!dy) throw new Error('deltaY 不能为 0');
+  return await runMouse(['scroll', dy]);
+};
+TOOLS['key-press'] = async ({ key, modifiers = [] }) => {
+  const k = String(key || '').toLowerCase().trim();
+  const mods = (Array.isArray(modifiers) ? modifiers : [modifiers]).map(m => MODS[String(m).toLowerCase().trim()]).filter(Boolean);
+  if (!k) throw new Error('key 不能为空');
+  const using = mods.length ? ` using ${mods.join(', ')}` : '';
+  if (KEYCODES[k]) return await appleScript(se(`key code ${KEYCODES[k]}${using}`));
+  if (k.length === 1) return await appleScript(se(`keystroke "${k.replace(/"/g, '\\"')}"${using}`));
+  throw new Error(`不支持的键: ${k}`);
+};
+TOOLS['hotkey-text'] = async ({ text }) => {
+  const t = String(text || '').toLowerCase().trim();
+  if (!/^[a-z0-9+=\-]{1,30}$/.test(t)) throw new Error('快捷键格式: cmd+c / ctrl+shift+t');
+  const parts = t.split('+').map(p => p.trim());
+  const main = parts.pop();
+  const mods = parts.map(p => MODS[p]).filter(Boolean);
+  if (parts.some(p => !MODS[p])) throw new Error('修饰键支持: shift/cmd/ctrl/alt');
+  const using = mods.length ? ` using ${mods.join(', ')}` : '';
+  if (KEYCODES[main] !== undefined) return await appleScript(se(`key code ${KEYCODES[main]}${using}`));
+  if (/^[a-z0-9]$/.test(main)) return await appleScript(se(`keystroke "${main}"${using}`));
+  throw new Error(`不支持的键: ${main}`);
+};
+
 // GLM/OpenAI function-calling 工具定义（给LLM看的说明书）
 const TOOL_SPECS = [
   { type: 'function', function: { name: 'list_dir', description: '列出目录内容（默认桌面/用户目录）', parameters: { type: 'object', properties: { dir: { type: 'string', description: '目录绝对路径，如 /Users/mac/Desktop' } }, required: [] } } },
@@ -346,6 +433,13 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'type-text', description: '在屏幕指定坐标点击后键盘输入文本（macOS Accessibility）。用于"在输入框里输入xx"类指令；x/y 可选（不给则在当前焦点处输入）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要输入的文本' }, x: { type: 'number', description: '目标输入框屏幕X坐标（视觉分析提供）' }, y: { type: 'number', description: '目标输入框屏幕Y坐标' } }, required: ['text'] } } },
   { type: 'function', function: { name: 'click-at', description: '点击屏幕坐标（配合屏幕分析的目标位置执行点击，如关弹窗/按按钮）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
   { type: 'function', function: { name: 'wechat-send', description: '通过微信给指定联系人发消息（自动打开微信→搜索联系人→输入并发送）。要求：微信已在 Mac 登录。发送前必须先向主人复述联系人和消息内容获确认', parameters: { type: 'object', properties: { contact: { type: 'string', description: '联系人备注名或昵称（需与微信通讯录一致）' }, message: { type: 'string', description: '消息内容' } }, required: ['contact', 'message'] } } },
+  { type: 'function', function: { name: 'mouse-move', description: '移动鼠标到屏幕坐标(不点击)', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'mouse-dblclick', description: '双击屏幕坐标（打开文件/选中文本等）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'mouse-rightclick', description: '右键点击屏幕坐标（弹出菜单）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'mouse-drag', description: '按住左键从一点拖到另一点（拖文件/滑块/选择区域）', parameters: { type: 'object', properties: { fromX: { type: 'number' }, fromY: { type: 'number' }, toX: { type: 'number' }, toY: { type: 'number' }, duration: { type: 'number', description: '拖动时长秒(0.1-3,默认0.5)' } }, required: ['fromX', 'fromY', 'toX', 'toY'] } } },
+  { type: 'function', function: { name: 'mouse-scroll', description: '滚动屏幕（deltaY负=向上滚,正=向下滚,单位像素）', parameters: { type: 'object', properties: { deltaY: { type: 'number' }, deltaX: { type: 'number' } }, required: ['deltaY'] } } },
+  { type: 'function', function: { name: 'key-press', description: '按键/组合键（key支持enter/esc/tab/space/delete/方向键/F1-F12/单字符；modifiers数组如["cmd","shift"]）', parameters: { type: 'object', properties: { key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } } }, required: ['key'] } } },
+  { type: 'function', function: { name: 'hotkey-text', description: '快捷键文本式（最直觉）："cmd+c" "cmd+shift+3" "ctrl+a" "enter" "esc"', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } },
 ];
 
 // IPC入口

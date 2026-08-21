@@ -113,6 +113,13 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒：N分钟后提醒主人某事（到点会弹出通知）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数(1-720)' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },
   { type: 'function', function: { name: 'cancel-reminder', description: '取消一个未触发的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'wechat-send', description: '通过微信给指定联系人发消息（自动开微信→搜索→输入→发送）。需微信已在Mac登录。调用前必须先向用户复述联系人与内容获得确认', parameters: { type: 'object', properties: { contact: { type: 'string', description: '联系人备注名/昵称' }, message: { type: 'string', description: '消息内容' } }, required: ['contact', 'message'] } } },
+  { type: 'function', function: { name: 'mouse-move', description: '移动鼠标到屏幕坐标(不点击)', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'mouse-dblclick', description: '双击屏幕坐标', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'mouse-rightclick', description: '右键点击屏幕坐标', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] } } },
+  { type: 'function', function: { name: 'mouse-drag', description: '拖拽：从一点按住拖到另一点', parameters: { type: 'object', properties: { fromX: { type: 'number' }, fromY: { type: 'number' }, toX: { type: 'number' }, toY: { type: 'number' }, duration: { type: 'number' } }, required: ['fromX', 'fromY', 'toX', 'toY'] } } },
+  { type: 'function', function: { name: 'mouse-scroll', description: '滚动（deltaY负=上,正=下,像素）', parameters: { type: 'object', properties: { deltaY: { type: 'number' }, deltaX: { type: 'number' } }, required: ['deltaY'] } } },
+  { type: 'function', function: { name: 'key-press', description: '按键(key:enter/esc/tab/space/方向键/F1-12/单字符; modifiers:["cmd","shift","ctrl","alt"])', parameters: { type: 'object', properties: { key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } } }, required: ['key'] } } },
+  { type: 'function', function: { name: 'hotkey-text', description: '快捷键："cmd+c" "cmd+shift+3" "enter" "esc"', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } },
 ];
 
 class PetController {
@@ -371,6 +378,8 @@ class PetController {
                 'open-app': `打开 ${args?.appName || '应用'}`, 'list-dir': '看看目录',
                 'set-reminder': '定提醒', 'cancel-reminder': '取消提醒',
                 'wechat-send': `给 ${args?.contact || '联系人'} 发微信`,
+                'mouse-move': '移鼠标', 'mouse-dblclick': '双击', 'mouse-rightclick': '右键',
+                'mouse-drag': '拖拽', 'mouse-scroll': '滚动', 'key-press': '按键', 'hotkey-text': `按 ${args?.text || '快捷键'}`,
               };
               this.bubble.showHint(`🔧 ${labels[name] || name}中…`);
             });
@@ -716,6 +725,7 @@ class PetController {
         const SCREEN_RE = /(屏幕|画面|截图|截屏|窗口|弹窗|按钮).{0,20}(哪个|哪里|什么|位置|看到|帮我|处理|关掉|点击|点一下)|帮我(关闭|点击|处理)|能看到.{0,8}(屏幕|我)/i;
         ans = SCREEN_RE.test(text);
       if (!ans) ans = /(发|发送|回).{0,6}(微信|消息)|(给|帮).{1,12}(发|送)(个|条|下)?.{0,4}(微信|消息|信息)/i.test(text);
+      if (!ans) ans = /(按|敲|点).{0,15}(command|cmd|⌘|ctrl|control|快捷键|回车|esc|删除键|tab)|(复制|粘贴|全选|截图|撤销|保存)一下?$|(复制|粘贴|全选|撤销)/.test(text);
       }
       }
       console.log('[PetController] 工具意图判断:', ans ? 'TOOL' : 'chat', '←', text.slice(0, 20));
