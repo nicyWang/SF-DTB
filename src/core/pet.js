@@ -448,6 +448,7 @@ class PetController {
       const ok = await this.doubao.start({
         onUserText: (text, interim) => {
           if (interim) this.bubble.showHint?.(`你说：${text}`);
+          else if (text) this._maybeVoiceToolRoute(text); // 最终转写：工具意图分流
         },
         onReplyText: (delta) => this.bubble.streamAppend(delta),
         onState: (s) => this._emitVoiceState(s),
@@ -590,6 +591,38 @@ class PetController {
   }
 
   /** 拿到完整用户语句 → chat → TTS 播报（可被打断）→ 继续听（打电话式循环） */
+  /**
+   * 豆包实时模式·工具意图分流：
+   * 转写命中工具意图（提醒/打开应用/看目录）时，暂停豆包音频通道，
+   * 改走 GLM+function-calling 执行工具，结果用本地 TTS 播报；完成后恢复豆包会话。
+   * 非工具意图不介入（保持豆包几百ms低延迟对话）。
+   */
+  _maybeVoiceToolRoute(text) {
+    if (!this._voiceActive || this._toolRouting) return;
+    // 本地意图检测（轻量正则，不打 LLM）
+    const TOOL_INTENT = /(提醒我|设个?提醒|定个?提醒|闹钟|打开.{1,12}(应用|app|safari|微信|访达|finder|备忘录|音乐|日历)|帮我打开|看看?(我)?(桌面|下载|文档|目录|文件夹)|列出?目录)/i;
+    if (!TOOL_INTENT.test(text)) return;
+    this._toolRouting = true;
+    console.log('[PetController] 语音工具意图命中:', text);
+    (async () => {
+      try {
+        // 抑制豆包这一轮的回复播放（执行工具期间丢弃服务端音频）
+        this.doubao?.suppressAudio?.();
+        this._emitVoiceState('thinking');
+        this.bubble.showHint?.(`🔧 处理：${text.slice(0, 30)}`, 2500);
+        const reply = await this.chat(text); // GLM + 工具链（含气泡展示）
+        if (reply && this._voiceActive) await this._speakReply(reply);
+      } catch (e) {
+        console.warn('[PetController] 工具分流失败:', e?.message);
+        this.bubble.showHint?.('刚才那个没处理好，再说一次？', 2500);
+      } finally {
+        this._toolRouting = false;
+        this.doubao?.resumeAudio?.();
+        if (this._voiceActive && this.doubao?.active) this._emitVoiceState('listening');
+      }
+    })();
+  }
+
   async _processVoiceText(text) {
     if (!text || !this._voiceActive) return;
     this.voice.stopListen?.();

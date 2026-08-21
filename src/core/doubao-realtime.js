@@ -36,6 +36,10 @@ class DoubaoRealtime {
 
   get active() { return this._active; }
 
+  /** 工具分流：丢弃当前轮豆包音频（_maybeVoiceToolRoute 用） */
+  suppressAudio() { this._suppressAudio = true; }
+  resumeAudio() { this._suppressAudio = false; }
+
   /** 启动实时对话（低延迟流式；失败返回 false → 调用方回退现有链路） */
   async start(handlers = {}) {
     if (this._active) return true;
@@ -209,6 +213,7 @@ class DoubaoRealtime {
 
   /** 服务端音频块（PCM s16le 24k mono）→ Web Audio 流式播放 */
   _onAudio(buf) {
+    if (this._suppressAudio) return; // 工具分流期间丢弃（防豆包回复与工具结果双声）
     try {
       const w = window;
       // 持久 AudioContext（会话期间复用）：每次 flush 都 close/new 会产生
