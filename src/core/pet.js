@@ -488,9 +488,18 @@ class PetController {
       const ok = await this.doubao.start({
         onUserText: (text, interim) => {
           if (interim) this.bubble.showHint?.(`你说：${text}`);
-          else if (text) this._maybeVoiceToolRoute(text); // 最终转写：工具意图分流
+          // 意图由豆包判断：最终转写交给豆包，它回复里带 [DO:xxx] 就执行（渲染层只解析标签）
         },
-        onReplyText: (delta) => this.bubble.streamAppend(delta),
+        onReplyText: (delta) => {
+          this.bubble.streamAppend(delta);
+          // 豆包意图自判：回复含 [DO:指令] → 剥标签执行（豆包负责判断，渲染层只解析）
+          const m = /\[DO[:：]\s*([^\]\n]{2,80})\]/.exec(delta || '');
+          if (m && !this._toolRouting && this._voiceActive) {
+            const cmd = m[1].trim();
+            console.log('[PetController] 豆包DO标签:', cmd);
+            this._execDoubaoCommand(cmd);
+          }
+        },
         onState: (s) => this._emitVoiceState(s),
         onInterrupt: () => {
           this.bubble.showHint?.('（好，你说～）', 1500);
@@ -783,6 +792,41 @@ class PetController {
       }
     }
     return `试了${MAX_STEPS}轮没完成，我先停了（怕乱点）。你可以再说得更具体些～`;
+  }
+
+  /** 豆包 DO 标签执行器：豆包已判断意图，这里只管干活 */
+  _execDoubaoCommand(cmd) {
+    this._toolRouting = true;
+    (async () => {
+      try {
+        this.doubao?.suppressAudio?.();
+        this._emitVoiceState('thinking');
+        let result;
+        if (this._isScreenAction?.(cmd) && window.screenAPI?.getScreenshot) {
+          result = await this._screenActionLoop(cmd); // 屏幕操作→CUA回路（含AX直击快通路）
+        } else {
+          const reply = await this.chat(cmd); // 其他→GLM 工具链
+          result = reply;
+        }
+        if (result && this._voiceActive) {
+          this.bubble.showText(String(result).slice(0, 120), Math.max(4000, String(result).length * 120));
+          if (this.doubao?.active) {
+            this.doubao.say?.(String(result).slice(0, 200)); // 结果豆包代播
+            this._emitVoiceState('speaking');
+            await new Promise(r => setTimeout(r, Math.min(15000, 1500 + String(result).length * 180)));
+          } else {
+            await this._speakReply(String(result));
+          }
+        }
+      } catch (e) {
+        console.warn('[PetController] DO执行失败:', e?.message);
+        this.bubble.showHint?.('那个没处理好，再说一次？', 2500);
+      } finally {
+        this._toolRouting = false;
+        this.doubao?.resumeAudio?.();
+        if (this._voiceActive && this.doubao?.active) this._emitVoiceState('listening');
+      }
+    })();
   }
 
   /** 屏幕相关请求判定（触发实时截屏分析） */
