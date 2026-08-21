@@ -20,6 +20,7 @@ async function voice(d) {
 async function doubao(d) {
   console.log('== 豆包实时语音 ==');
   await d.ev("localStorage.setItem('pet-doubao-realtime-config', JSON.stringify({ appId: '7889599946', accessToken: '8DkN3mLYq0bMx51bWcMSPD2za3pBvmNz', botName: '毛毛', systemRole: '你是桌面小球宠物毛毛，甜美粘人', voice: 'zh_female_xiaohe_jupiter_bigtts' }))");
+  await d.ev("localStorage.setItem('pet-voice-engine', 'doubao')"); // 引擎切换：该组测豆包端到端
   await d.startVoice();
   await d.sleep(4000);
   const s = await d.voiceState();
@@ -27,6 +28,7 @@ async function doubao(d) {
   d.check('麦克风推流', (await d.ev('!!window.liveRefs.doubao._micStream')).v === true);
   await d.stopVoice();
   await d.ev("(async()=>{ try{ await window.doubaoAPI.stop(); }catch(e){} return 'ok'; })()");
+  await d.ev("localStorage.setItem('pet-voice-engine', 'self')"); // 恢复默认自建引擎
 }
 
 // ---------- UI 组 ----------

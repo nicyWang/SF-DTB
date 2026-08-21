@@ -545,6 +545,14 @@
       <textarea id="db-role" rows="2" placeholder="例：你是主人的桌面小球宠物，陪伴主人工作，性格甜美粘人"></textarea>
     </div>
     <div class="row">
+      <label for="voice-engine">语音引擎</label>
+      <select id="voice-engine">
+        <option value="self">全能模式（自建管线·GLM原生工具调用）</option>
+        <option value="doubao">极速模式（豆包端到端·纯聊天最快）</option>
+      </select>
+      <div class="hint" style="font-size:11px">全能模式：GLM 单一大脑直接操控电脑（工具调用原生、可调试、便宜）；极速模式：豆包端到端（说完即答、音色活，工具走标签协议）。默认全能。</div>
+    </div>
+    <div class="row">
       <label for="db-bargein">实时打断（她说话时插嘴）</label>
       <input type="checkbox" id="db-bargein">
       <div class="hint" style="font-size:11px">开启后她播报期间说话可打断（耳机最佳）。关闭则播完再听。</div>
@@ -682,6 +690,7 @@
       $('db-botname').value = dbc.botName || '';
       $('db-role').value = dbc.systemRole || '';
       $('db-voice').value = dbc.voice || 'zh_female_xiaohe_jupiter_bigtts';
+      $('voice-engine').value = localStorage.getItem('pet-voice-engine') || 'self';
       $('db-bargein').checked = dbc.bargein !== false;
 
       const vc = loadJSON(KEYS.voice, { ttsEnabled: true, ttsRate: 1.0, voiceName: '', asrEnabled: true, edgeVoice: 'zh-CN-XiaoyiNeural' });
@@ -745,6 +754,7 @@
       localStorage.setItem(KEYS.perception, JSON.stringify(cfg.perception));
       localStorage.setItem(KEYS.danmaku, JSON.stringify(cfg.danmaku));
       localStorage.setItem(KEYS.voice, JSON.stringify(cfg.voice));
+      localStorage.setItem('pet-voice-engine', $('voice-engine').value);
       localStorage.setItem('pet-doubao-realtime-config', JSON.stringify(cfg.doubao));
       localStorage.setItem('pet-avatar-config', JSON.stringify(cfg.avatar));
       showToast('已保存全部设置');
