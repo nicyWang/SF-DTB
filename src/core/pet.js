@@ -339,7 +339,12 @@ class PetController {
       await this.memory.add('short', `主人说：${text}`);
 
       // 3. 组装 messages（人设system + 知识库检索 + 记忆块 + 最近对话）
-      const messages = await this._buildMessages(text);
+      let messages = await this._buildMessages(text);
+        // 屏幕指挥：涉及屏幕内容的请求 → 实时截屏分析注入（vision 坐标级定位）
+        if (this._isScreenRequest?.(text)) {
+          const sc = await this._analyzeScreenFor(text);
+          if (sc) { messages = [...messages, { role: 'system', content: sc }]; this.bubble.showHint?.('👀 看到了', 1200); }
+        }
 
       // 4. 回复（Agent模式：可调用工具；普通模式：纯流式）
       const lipTimer = setInterval(() => this.live2d.lipSpeak?.(1400), 1200);
@@ -651,12 +656,51 @@ class PetController {
     })();
   }
 
+  /** 屏幕相关请求判定（触发实时截屏分析） */
+  _isScreenRequest(text) {
+    return /(屏幕|画面|截屏|截图|窗口|弹窗|按钮|那个东西|这个位置|坐标|点一下|点击|关掉它|右上|左下|帮我处理)/.test(text);
+  }
+
+  /**
+   * 实时屏幕分析：截屏 → vision 识别（内容+目标元素坐标）
+   * 返回注入对话的上下文（含屏幕尺寸与目标坐标，供 AppleScript 工具执行点击）
+   */
+  async _analyzeScreenFor(query) {
+    try {
+      if (!window.screenAPI?.getScreenshot) return '';
+      this.bubble.showHint?.('📸 正在看你的屏幕…', 2000);
+      const b64 = await window.screenAPI.getScreenshot();
+      if (!b64) return '';
+      const img = 'data:image/png;base64,' + b64;
+      const analysis = await this.llm.vision(img,
+        `主人说："${query}"。请分析这张屏幕截图：1)屏幕上有什么（应用/窗口/主要内容，30字内）2)与主人请求相关的目标元素在图中的位置（归一化坐标0-1000，左上原点）3)操作类请求给出建议动作。严格JSON：{"scene":"描述","target":{"name":"元素名","x":123,"y":456,"action":"click|close|none"}}`, 'image/png');
+      const m = String(analysis || '').match(/\{[\s\S]*\}/);
+      if (!m) return `【屏幕实况】刚截了你的屏幕，画面内容：${String(analysis).slice(0, 80)}`;
+      const j = JSON.parse(m[0]);
+      const w = screen.width, h = screen.height;
+      const px = j.target ? Math.round((j.target.x / 1000) * w) : 0;
+      const py = j.target ? Math.round((j.target.y / 1000) * h) : 0;
+      this._screenTarget = j.target ? { ...j.target, px, py, screenW: w, screenH: h } : null;
+      let ctx = `【屏幕实况】你能实时看到主人屏幕（刚截图分析过）。画面：${j.scene}`;
+      if (this._screenTarget) {
+        ctx += `。与请求相关的目标：${j.target.name}，屏幕绝对坐标约 (${px}, ${py})（屏幕 ${w}x${h}）`;
+        if (j.target.action === 'click') ctx += '。可用 run_applescript 工具在该坐标执行点击。';
+      }
+      ctx += ' 回答时自然描述你看到的内容，证明你能看到屏幕。';
+      return ctx;
+    } catch (e) {
+      console.warn('[PetController] 屏幕分析失败:', e?.message);
+      return '';
+    }
+  }
+
+
   /** LLM 意图判断：是否需要调用工具（理解口语化表达，10s超时默认false） */
   async _llmNeedTool(text) {
     try {
       const r = await Promise.race([
         this.llm.chat([
-          { role: 'system', content: '判断用户这句话是否需要在本机执行操作（工具）。工具类别：定时提醒/闹钟、打开应用、查看目录文件、读写移动文件、截屏、系统信息、执行自动化。纯聊天/问知识/闲聊/问天气→no。轻微模糊时→no（宁可漏不可误执行）。只回答 yes 或 no。' },
+          { role: 'system', content: '判断这句话是否是让助手在本机执行操作的指令（需调用工具）。判定规则：①"打开/启动/开一下/我要用 + 应用"→yes ②"提醒/闹钟/叫我/X分钟后"→yes ③"看看/列出/整理 + 桌面/文件夹/文件"→yes ④"截屏/截图"→yes ⑤涉及屏幕内容："屏幕上/画面上/那个窗口/弹窗/按钮/关掉/点一下/右上角/左下角/帮我处理"→yes ⑥问"能看到我屏幕吗"→yes ⑦纯聊天/讲笑话/问天气→no。只回答yes或no。' },
           { role: 'user', content: text },
         ]),
         new Promise(res => setTimeout(() => res('no'), 10000)),
@@ -666,6 +710,10 @@ class PetController {
       if (!ans) {
         const RE = /(打开|启动|开一下|开个|我要用|我想用|帮我开).{0,12}(微信|safari|访达|finder|备忘录|音乐|日历|计算器|地图|邮件|照片|终端|浏览器|应用|app)|((看看|列出|整理|查查?|有什么).{0,8}(桌面|下载|文档|文件夹|目录|文件))|(提醒|闹钟|叫我|截屏|截图)/i;
         ans = RE.test(text);
+      if (!ans) {
+        const SCREEN_RE = /(屏幕|画面|截图|截屏|窗口|弹窗|按钮).{0,20}(哪个|哪里|什么|位置|看到|帮我|处理|关掉|点击|点一下)|帮我(关闭|点击|处理)|能看到.{0,8}(屏幕|我)/i;
+        ans = SCREEN_RE.test(text);
+      }
       }
       console.log('[PetController] 工具意图判断:', ans ? 'TOOL' : 'chat', '←', text.slice(0, 20));
       return ans;
