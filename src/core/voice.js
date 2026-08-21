@@ -486,10 +486,18 @@ class VoiceService {
    */
   async transcribe(blob) {
     // ASR 配置解析：独立配置（pet-asr-config）> 跟随 LLM（兼容旧版）
-    // 支持任意 OpenAI 兼容 /audio/transcriptions 端点（智谱/火山方舟/OpenAI/Groq/DeepSeek等）
-    const asrCfg = readJSON(this.storage, 'pet-asr-config', {});
-    const llmCfg = readJSON(this.storage, LLM_CONFIG_KEY, {});
-    const cfg = (asrCfg.baseURL && asrCfg.apiKey) ? asrCfg : llmCfg;
+    // provider=volc → 火山大模型极速版（独立协议）；其余走 OpenAI 兼容 /audio/transcriptions
+    const asrCfg0 = readJSON(this.storage, 'pet-asr-config', {});
+    const llmCfg0 = readJSON(this.storage, LLM_CONFIG_KEY, {});
+    // 火山直连模式：显式 provider=volc，或（appId+accessToken 且无 baseURL）
+    const volcDirect = asrCfg0.provider === 'volc'
+      || (asrCfg0.appId && asrCfg0.accessToken && !asrCfg0.baseURL);
+    if (volcDirect) {
+      const appId = asrCfg0.appId || readJSON(this.storage, 'pet-doubao-realtime-config', {}).appId;
+      const accessToken = asrCfg0.accessToken || readJSON(this.storage, 'pet-doubao-realtime-config', {}).accessToken;
+      if (appId && accessToken) return await this._transcribeVolc(blob, appId, accessToken);
+    }
+    const cfg = (asrCfg0.baseURL && asrCfg0.apiKey) ? asrCfg0 : llmCfg0;
     const base = String(cfg.baseURL || '').replace(/\/+$/, '');
     if (!base || !cfg.apiKey) throw new Error('未配置 LLM 服务（转写需要智谱 API Key）');
 
@@ -521,6 +529,47 @@ class VoiceService {
     }
     const data = await res.json().catch(() => ({}));
     return String(data.text || '').trim();
+  }
+
+  /**
+   * 火山大模型录音极速版转写（api/v3/auc/bigmodel/recognize/flash）
+   * 协议：base64(wav) JSON → 一次请求返回文本；鉴权 X-Api-App-Key/Access-Key（复用豆包实时语音凭证）
+   */
+  async _transcribeVolc(blob, appId, accessToken) {
+    // 统一转 16k mono wav（_encodeWav 返回 ArrayBuffer 或 null）
+    let wavArr = null;
+    try {
+      const w = await this._encodeWav(blob);
+      if (w) wavArr = w instanceof ArrayBuffer ? w : await w.arrayBuffer();
+    } catch (e) { console.warn('[VoiceService] WAV 重编码失败:', e); }
+    const arrBuf = wavArr || await blob.arrayBuffer();
+    const u8all = new Uint8Array(arrBuf);
+    let s = '';
+    const CH = 0x8000;
+    for (let i = 0; i < u8all.length; i += CH) s += String.fromCharCode.apply(null, u8all.subarray(i, i + CH));
+    const b64 = btoa(s);
+    const reqid = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())).toUpperCase();
+    const res = await fetch('https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash', {
+      method: 'POST',
+      headers: {
+        'X-Api-App-Key': String(appId),
+        'X-Api-Access-Key': String(accessToken),
+        'X-Api-Resource-Id': 'volc.bigasr.auc_turbo',
+        'X-Api-Request-Id': reqid,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        audio: { data: b64, format: 'wav' },
+        request: { model_name: 'bigmodel' },
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const code = data?.header?.code;
+    if (code !== undefined && code !== 0 && String(code) !== '20000000') {
+      throw new Error(`火山ASR ${code}: ${String(data?.header?.message || '').slice(0, 100)}`);
+    }
+    if (!res.ok && code === undefined) throw new Error('火山ASR HTTP ' + res.status);
+    return String(data?.result?.text || '').trim();
   }
 
   // ---------- VAD 持续听（recorder 模式：音量检测自动分段） ----------
