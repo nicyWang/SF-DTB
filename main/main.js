@@ -118,8 +118,10 @@ function createSettingsWindow(opts = {}) {
     return settingsWindow;
   }
   settingsWindow = new BrowserWindow({
-    width: 500,
-    height: 600,
+    width: 980,
+    height: 760,
+    minWidth: 760,
+    minHeight: 560,
     frame: true,
     transparent: false,
     resizable: true,
