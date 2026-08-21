@@ -635,6 +635,8 @@ class VoiceService {
     this._vadRecorder = rec;
     rec.ondataavailable = (e) => {
       if (!e.data || !e.data.size || !this._vadActive) return;
+      // TTS 外放中：数据直接丢弃（回声污染流）——杜绝旧 recorder 块混入后续断句
+      if (this._ttsPlayingOutloud) return;
       // 打断触发的 recorder 重启：首个 chunk（含 EBML 头）直接并入说话段
       // （用户正在插话，预录无意义，头必须在段首）
       if (this._mergeSilentIntoSpeech) {
@@ -658,19 +660,49 @@ class VoiceService {
     const analyser = this._vadCtx.createAnalyser();
     analyser.fftSize = 1024;
     src.connect(analyser);
+    // PCM 直采：ScriptProcessor 并联录音（跳过 MediaRecorder/webm/EBML 解码地狱——
+    // 断句时直接取 PCM 切片转 WAV，头块丢失/块拼接等问题从架构上消灭）
+    this._pcmBuf = [];
+    this._pcmPre = [];   // 预录环（~1s）
+    this._pcmCap = !!this._vadCtx.createScriptProcessor;
+    if (this._pcmCap) {
+      try {
+        const proc = this._vadCtx.createScriptProcessor(4096, 1, 1);
+        proc.onaudioprocess = (ev) => {
+          const ch = ev.inputBuffer.getChannelData(0);
+          const copy = new Float32Array(ch.length);
+          copy.set(ch);
+          if (this._ttsPlayingOutloud) return; // 播报中不录（回声）
+          if (this._vadSpeechStarted) {
+            this._pcmBuf.push(copy);
+            if (this._pcmBuf.length > 400) this._pcmBuf.shift(); // 4096*400≈102s 上限
+          } else {
+            this._pcmPre.push(copy);
+            if (this._pcmPre.length > 12) this._pcmPre.shift(); // ~1s 预录
+          }
+        };
+        src.connect(proc);
+        proc.connect(this._vadCtx.destination); // 需连接才驱动（静音输出）
+        this._pcmProc = proc;
+      } catch (e) { this._pcmCap = false; }
+    }
     const buf = new Float32Array(analyser.fftSize);
-    const BASE_THRESH = 0.035; // 基准阈值（安静环境）
+    const BASE_THRESH = 0.022; // 基准阈值（实测系统输入音量低的机器外放/人声 RMS 仅 0.02-0.04，0.035 会漏）
     const SILENT_BREAK = 16;   // ~16×60ms≈1s 静音 → 断句
     const LEAD_IN = 2;         // 连续2帧超阈值才算说话开始（防噪点）
     // 自适应阈值：开场 1.2s 采样环境底噪 → 阈值 = max(基准, 底噪×1.8)。
     // 嘈杂环境（外接音响底噪/风扇）基线可达 0.04+，固定阈值会把底噪当说话/或状态混乱。
     let THRESH = BASE_THRESH;
+    // 代际令牌：防多循环并存（stopVoiceLoop 清 timer 会被另一循环的 setTimeout 覆盖，
+    // 旧循环引用已停的旧 analyser 读全0 → 永远静音 → "多轮失灵"）
+    this._vadGen = (this._vadGen || 0) + 1;
+    const myGen = this._vadGen;
     this._vadCalibrating = true;
     let calSamples = [];
     setTimeout(() => {
       if (calSamples.length > 5) {
         const noise = calSamples.reduce((a, b) => a + b, 0) / calSamples.length;
-        THRESH = Math.max(BASE_THRESH, noise * 1.8);
+        THRESH = Math.min(0.06, Math.max(BASE_THRESH, noise * 1.8));
         console.log('[VoiceService] VAD 自适应阈值: 底噪=' + noise.toFixed(4) + ' → 阈值=' + THRESH.toFixed(4));
       }
       this._vadCalibrating = false;
@@ -678,6 +710,7 @@ class VoiceService {
 
     const poll = () => {
       if (!this._vadActive) return;
+      if (myGen !== this._vadGen) return; // 旧代循环自杀（新会话已开新循环）
       if (this._vadPaused) {           // 暂停中：不检测、不消费 chunks
         this._vadTimer = setTimeout(poll, 60);
         return;
@@ -823,16 +856,77 @@ class VoiceService {
     const h = this._vadHandlers;
     if (!h) return;
     h.onState?.('transcribing');
+    // ── PCM 直采路径（主）：无解码、无 EBML，绝无"空识别/头丢失"问题 ──
+    if (this._pcmCap && (this._pcmBuf.length || this._pcmPre.length)) {
+      const pcm = [...this._pcmPre, ...this._pcmBuf];
+      this._pcmBuf = [];
+      this._pcmPre = [];
+      if (pcm.length >= 3) { // 至少 ~0.3s
+        try {
+          const total = pcm.reduce((n, c) => n + c.length, 0);
+          const all = new Float32Array(total);
+          let off = 0;
+          for (const c of pcm) { all.set(c, off); off += c.length; }
+          const wav = this._pcmToWav(all, this._vadCtx.sampleRate);
+          const wavBlob = new Blob([wav], { type: 'audio/wav' });
+          let textP = '';
+          try {
+            const rP = await this.transcribe(wavBlob);
+            textP = rP || '';
+          } catch (e) { textP = ''; }
+          if (textP) {
+            if (!this._vadActive) return;
+            h.onState?.('listening');
+            h.onFinal?.(textP);
+            return;
+          }
+          console.warn('[VoiceService] PCM 直采转写空，回退 webm 路径');
+        } catch (e) {
+          console.warn('[VoiceService] PCM 路径异常，回退 webm:', e && e.message);
+        }
+      }
+    }
     const blob = new Blob(chunks, { type: this._vadRecorder?.mimeType || 'audio/webm' });
     // 断句即停 recorder：已收 chunks 足够（说话段+尾静音）。转写完重启 recorder，
     // 保证下一段从 webm 头（EBML）开始，可解码。
     this._restartVadRecorder();
     let text = '';
+    const tryTranscribe = async (targetBlob) => {
+      const r = await this.transcribe(targetBlob);
+      if (!r) throw new Error('空识别（音频损坏或不可解码）');
+      return r;
+    };
+    const heal = async () => {
+      // 自愈：坏 webm 常见原因=预录块与语音块来自不同 recorder 实例（EBML 头不匹配）。
+      // 逐块扫描 EBML 头魔数（0x1A45DFA3），从最后一个"带头块"重组再试
+      const withHeader = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const ab = await chunks[i].arrayBuffer();
+        const u8 = new Uint8Array(ab);
+        if (u8.length > 4 && u8[0] === 0x1A && u8[1] === 0x45 && u8[2] === 0xDF && u8[3] === 0xA3) {
+          withHeader.length = 0;
+          withHeader.push(chunks[i]);
+        } else if (withHeader.length) {
+          withHeader.push(chunks[i]);
+        }
+      }
+      if (!withHeader.length) throw new Error('未找到 EBML 头');
+      const retryBlob = new Blob(withHeader, { type: blob.type });
+      const r2 = await this.transcribe(retryBlob);
+      if (!r2) throw new Error('自愈后仍空识别');
+      return r2;
+    };
     try {
-      text = await this.transcribe(blob);
-    } catch (err) {
-      console.error('[VoiceService] VAD 段转写失败:', err);
-      h.onError?.('转写失败：' + (err && err.message ? err.message : err));
+      try {
+        text = await tryTranscribe(blob);
+      } catch (err) {
+        console.warn('[VoiceService] 转写失败/空识别，EBML 自愈重试:', err && err.message);
+        text = await heal();
+        console.log('[VoiceService] 自愈成功:', text.slice(0, 30));
+      }
+    } catch (err2) {
+      console.error('[VoiceService] 转写最终失败:', err2 && err2.message);
+      h.onError?.('转写失败：' + (err2 && err2.message ? err2.message : err2));
     }
     if (!this._vadActive) return; // 会话已终止
     h.onState?.('listening');
@@ -872,6 +966,11 @@ class VoiceService {
   /** 停止 VAD 持续听（彻底释放麦克风） */
   stopVoiceLoop() {
     this._vadActive = false;
+    this._vadGen = (this._vadGen || 0) + 1; // 代际+1：所有在飞 poll 自杀
+    try { this._pcmProc && (this._pcmProc.onaudioprocess = null, this._pcmProc.disconnect()); } catch { /* ignore */ }
+    this._pcmProc = null;
+    this._pcmBuf = [];
+    this._pcmPre = [];
     if (this._vadTimer) { clearTimeout(this._vadTimer); this._vadTimer = null; }
     try { this._vadRecorder?.state !== 'inactive' && this._vadRecorder?.stop(); } catch { /* ignore */ }
     this._vadRecorder = null;
@@ -918,9 +1017,12 @@ class VoiceService {
     let audioBuf;
     try {
       audioBuf = await tmp.decodeAudioData(arrayBuf.slice(0));
-    } finally {
+    } catch (e) {
       try { tmp.close(); } catch { /* ignore */ }
+      console.warn('[VoiceService] WAV 重编码失败:', e && e.message);
+      return null; // 解码失败让调用方走原始格式/自愈路径
     }
+    try { tmp.close(); } catch { /* ignore */ }
     // 混合为单声道
     const chs = audioBuf.numberOfChannels;
     const len = audioBuf.length;
