@@ -287,6 +287,19 @@ const TOOLS = {
   },
   // wechat-send: { contact, message } → 微信发消息（macOS：AppleScript UI 自动化）
   // 流程：打开微信 → 搜索联系人 → 进聊天 → 输入框打字 → 回车发送
+  // mic-energy: 采样~2秒麦克风输出 RMS（播放任务验证用：扬声器有声→麦克风拾到）
+  'mic-energy': async () => {
+    const { execFile } = require('child_process');
+    const bin = path.join(__dirname, '..', 'bin', 'mic-energy');
+    return await new Promise((resolve) => {
+      execFile(bin, [], { timeout: 6000 }, (err, stdout) => {
+        // 取输出里最大 RMS
+        const vals = String(stdout || '').match(/0\.\d+/g) || ['0'];
+        const max = Math.max(...vals.map(Number));
+        resolve(String(max));
+      });
+    });
+  },
   'wechat-send': async ({ contact, message }) => {
     const c = String(contact || '').trim().slice(0, 50);
     const m = String(message || '').trim().slice(0, 1000);
