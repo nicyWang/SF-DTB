@@ -717,8 +717,9 @@ class PetController {
         try {
           this.bubble.showHint?.(`⚡ 直接找「${cand}」…`, 1500);
           const r = await window.windowAPI.invokeTool('ui-click', { name: cand });
-          if (String(r.result || r).includes('已')) {
-            return `搞定啦（直击）！${String(r.result || r).slice(0, 50)}`;
+          const rs = String(r?.result || r || '');
+          if (r?.ok === true && rs.includes('已') && !rs.includes('执行失败')) {
+            return `搞定啦（直击）！${rs.slice(0, 50)}`;
           }
         } catch { /* AX 没找到 → 落视觉回路 */ }
       }
@@ -828,7 +829,7 @@ class PetController {
     try {
       const r = await Promise.race([
         this.llm.chat([
-          { role: 'system', content: '判断这句话是否是让助手在本机执行操作的指令（需调用工具）。判定规则：①"打开/启动/开一下/我要用 + 应用"→yes ②"提醒/闹钟/叫我/X分钟后"→yes ③"看看/列出/整理 + 桌面/文件夹/文件"→yes ④"截屏/截图"→yes ⑤涉及屏幕内容："屏幕上/画面上/那个窗口/弹窗/按钮/关掉/点一下/右上角/左下角/帮我处理"→yes ⑤b "输入/打字/填上/写上 + 内容"→yes ⑤c "发微信/给XX发消息/发条消息/发给他/发给她"→yes ⑤b "输入/打字/填上/写上 + 内容"→yes（键盘输入工具） ⑥问"能看到我屏幕吗"→yes ⑦纯聊天/讲笑话/问天气→no。只回答yes或no。' },
+          { role: 'system', content: '判断这句话是否是让助手在本机执行操作的指令（需调用工具）。判定规则（重要）：出现"点击/点一下/单击/按下/关掉/勾选/双击/右键"等操作动词（无论后面跟什么名词，如"下一步""确认""登录""它"）→必须yes；①"打开/启动/开一下/我要用 + 应用"→yes ②"提醒/闹钟/叫我/X分钟后"→yes ③"看看/列出/整理 + 桌面/文件夹/文件"→yes ④"截屏/截图"→yes ⑤涉及屏幕内容："屏幕上/画面上/那个窗口/弹窗/按钮/关掉/点一下/右上角/左下角/帮我处理"→yes ⑤b "输入/打字/填上/写上 + 内容"→yes ⑤c "发微信/给XX发消息/发条消息/发给他/发给她"→yes ⑤b "输入/打字/填上/写上 + 内容"→yes（键盘输入工具） ⑥问"能看到我屏幕吗"→yes ⑦纯聊天/讲笑话/问天气→no。只回答yes或no。' },
           { role: 'user', content: text },
         ]),
         new Promise(res => setTimeout(() => res('no'), 10000)),
@@ -843,6 +844,7 @@ class PetController {
         ans = SCREEN_RE.test(text);
       if (!ans) ans = /(发|发送|回).{0,6}(微信|消息)|(给|帮).{1,12}(发|送)(个|条|下)?.{0,4}(微信|消息|信息)/i.test(text);
       if (!ans) ans = /(按|敲|点).{0,15}(command|cmd|⌘|ctrl|control|快捷键|回车|esc|删除键|tab)|(复制|粘贴|全选|截图|撤销|保存)一下?$|(复制|粘贴|全选|撤销)/.test(text);
+      if (!ans) ans = /^(点击|点一下|单击|双击|右键点击|按下|按一下|按|勾选|关掉|关闭|打开)(.{0,14})$/m.test(text.trim()); // 操作动词开头=指令
       }
       }
       console.log('[PetController] 工具意图判断:', ans ? 'TOOL' : 'chat', '←', text.slice(0, 20));

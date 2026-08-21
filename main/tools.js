@@ -452,8 +452,11 @@ TOOLS['ui-click'] = async ({ name, app }) => {
   const axArgs = ['axclick', n];
   if (pid) axArgs.push('--pid', String(pid));
   const r = await runAx(axArgs);
-  if (String(r).startsWith('err:not-found')) throw new Error(`当前应用里没找到叫"${n}"的元素（可先用 ui-list 查看可点元素）`);
-  return String(r).replace(/^ok:(press|pid)\|/, '').replace(/\|/g, ' ') + `（已${String(r).includes('press') ? '直接按压' : '点击'}）`;
+  const rs = String(r);
+  if (rs.startsWith('err:') || rs.startsWith('执行失败')) {
+    throw new Error(`元素"${n}"未找到或执行失败（网页内容可能不在AX树，将走视觉定位）`);
+  }
+  return rs.replace(/^ok:(press|pid)\|/, '').replace(/\|/g, ' ') + `（已${rs.includes('press') ? '直接按压' : '点击'}）`;
 };
 TOOLS['ui-set'] = async ({ name, value, app }) => {
   const n = String(name || '').trim().slice(0, 60);
