@@ -150,7 +150,8 @@ ipcMain.handle('open-settings', () => {
 });
 
 // ---------- IPC: 设置更新中继（设置窗口 → 宠物主窗口） ----------
-ipcMain.on('settings-updated', (_e, payload) => {
+ipcMain.on('settings-updated', (event, payload) => {
+  event.sender.send('settings-updated', payload);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('settings-updated', payload);
   }
@@ -420,7 +421,7 @@ app.whenReady().then(() => {
   });
 
   // 验证钩子：PET_AUTOQUIT_MS=5000 npm start 可自动退出（用于无头验证）
-  if (process.env.PET_AUTOQUIT_MS) {
+  if (process.env.PET_AUTOQUIT_MS && process.env.PET_ROAM_TEST !== '1') {
     // PET_TEST_SETTINGS=1 时同时打开设置窗口验证渲染
     if (process.env.PET_TEST_SETTINGS) createSettingsWindow();
     // PET_STUDIO_TEST=1 时打开设置窗口并自动跑角色工坊mock流程（建角色→切换→截图）

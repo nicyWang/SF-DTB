@@ -134,6 +134,18 @@ const ipc = mockIpcMain();
 initToolsIPC(ipc, (m) => logs.push(m));
 const invoke = (name, args) => ipc.handlers.get('tool-invoke')(null, name, args);
 
+await test('open_url：注入名与file协议被拒（ok:false）', async () => {
+  for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'https://example.com/?x=$(id)']) {
+    const r = await invoke('open_url', { url: bad });
+    if (bad.startsWith('https://')) {
+      assert.ok(r.ok, JSON.stringify(r));
+    } else {
+      assert.ok(!r.ok);
+      assert.ok(/http\/https/.test(r.error));
+    }
+  }
+});
+
 await test('未知工具 → {ok:false}', async () => {
   const r = await invoke('no-such-tool', {});
   assert.ok(!r.ok);

@@ -190,6 +190,7 @@ class DoubaoRealtime {
         // ⚠️ 服务端"音频发完"≠本地"播完"——网络比播放快，本地队列可能还有 1-2s
         // 未播音频。播完才算真空闲：按队列剩余时长延迟恢复麦克风。
         this._scheduleMicUnmute();
+        h.onAudioEnd?.();
         h.onState?.('listening');
         break;
       case 'error':
@@ -245,6 +246,7 @@ class DoubaoRealtime {
       const aligned = new Uint8Array(u8.byteLength - (u8.byteLength % 2));
       aligned.set(u8.subarray(0, aligned.byteLength));
       const i16 = new Int16Array(aligned.buffer);
+      this._onAudioFrame?.(i16);
       const f32 = new Float32Array(i16.length);
       for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
       const audioBuf = this._playCtx.createBuffer(1, f32.length, 24000);

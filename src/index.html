@@ -218,6 +218,11 @@
 
   <!-- ===== 依赖加载顺序（勿改）：pixi → sprite（替代 Live2D） ===== -->
   <script src="../node_modules/pixi.js/dist/browser/pixi.min.js"></script>
+  <!-- Emotion Ball official engine (required load order) -->
+  <script src="../vendor/emotion-ball/js/rings.js"></script>
+  <script src="../vendor/emotion-ball/js/emotions.js"></script>
+  <script src="../vendor/emotion-ball/js/ball.js"></script>
+  <script src="../vendor/emotion-ball/js/engine.js"></script>
 
   <script type="module">
     // ===== 应用入口：装配全部模块（T11 集成接线） =====
@@ -225,6 +230,7 @@
     import { MemoryService } from './core/memory.js';
     import { PersonalityEngine } from './core/personality.js';
     import { SpriteRenderer } from './core/sprite.js';
+    import { EmotionBallRenderer } from './core/emotionBallRenderer.js';
     import { BallRenderer } from './core/ball.js';
     import { BubbleUI } from './core/bubble.js';
     import { PetController, CHARACTER_IDS, DEFAULT_CHARACTER_ID } from './core/pet.js';
@@ -288,9 +294,17 @@
       console.log(`[selftest] ${pass ? 'PASS' : 'FAIL'} ${name} :: ${detail}`);
       const el = document.getElementById('selftest-panel');
       if (el) {
-        el.innerHTML = stResults.map((r) =>
-          `<div style="color:${r.pass ? '#6fdd8b' : '#ff7b7b'}">${r.pass ? '✓' : '✗'} ${r.name}: ${r.detail}</div>`
-        ).join('') + `<div style="color:#fff;margin-top:4px">合计: ${stResults.filter(r => r.pass).length}/${stResults.length}</div>`;
+        el.textContent = '';
+        for (const r of stResults) {
+          const row = document.createElement('div');
+          row.style.color = r.pass ? '#6fdd8b' : '#ff7b7b';
+          row.textContent = `${r.pass ? '✓' : '✗'} ${r.name}: ${r.detail}`;
+          el.appendChild(row);
+        }
+        const total = document.createElement('div');
+        total.style.cssText = 'color:#fff;margin-top:4px';
+        total.textContent = `合计: ${stResults.filter(r => r.pass).length}/${stResults.length}`;
+        el.appendChild(total);
       }
     }
     const stLater = (ms, fn) => setTimeout(fn, ms);
@@ -310,18 +324,16 @@
       const memory = new MemoryService({ llm, characterId: activeCharacter });
       const personality = new PersonalityEngine(activeCharacter);
 
-      // ---- 2. 渲染器：小球模式(?ball=1 / localStorage pet-ball-mode=1) 或 写实立绘 ----
-      const BALL_MODE = new URLSearchParams(location.search).has('ball')
-        || localStorage.getItem('pet-ball-mode') === '1';
+      // ---- 2. 渲染器：默认小球；显式 ?character=1 或 pet-ball-mode=0 才走写实立绘 ----
+      const urlParams = new URLSearchParams(location.search);
+      const ballPreference = localStorage.getItem('pet-ball-mode');
+      const BALL_MODE = urlParams.has('ball')
+        || (!urlParams.has('character') && ballPreference !== '0');
       let sprite;
       if (BALL_MODE) {
-        log('init ball');
-        const ballApp = new PIXI.Application({ transparent: true, autoDensity: true,
-          resolution: window.devicePixelRatio || 1, resizeTo: document.getElementById('stage'),
-          forceCanvas: true });
-        document.getElementById('stage').appendChild(ballApp.view);
-        sprite = new BallRenderer({ app: ballApp, container: ballApp.stage });
-        log('ball ready');
+        log('init emotion ball');
+        sprite = new EmotionBallRenderer();
+        log('emotion ball ready');
       } else {
         sprite = new SpriteRenderer({ characters });
       }
@@ -353,19 +365,13 @@
       const doubao = new DoubaoRealtime();
       const avatarLive = new AvatarLive();
       // 豆包TTS音频同步喂数字人驱动口型（24k→16k在AvatarLive内重采样）
-      const __doa = doubao._onAudio.bind(doubao);
-      doubao._onAudio = function(buf) {
-        try {
-          const u8 = (buf instanceof Uint8Array) ? buf : new Uint8Array(buf.buffer||buf, buf.byteOffset||0, buf.byteLength);
-          const n2 = u8.byteLength - (u8.byteLength % 2);
-          if (n2 > 0) avatarLive.feedAudio(new Int16Array(u8.buffer, u8.byteOffset, n2/2));
-        } catch {}
-        return __doa(buf);
+      doubao._onAudioFrame = (frame) => {
+        try { avatarLive.feedAudio(frame); } catch (err) { console.warn('[pet-app] 数字人音频驱动失败:', err?.message); }
       };
-      const perception = new PerceptionService({ llm, memory });
       const pet = new PetController({ llm, memory, personality, live2d: sprite, bubble, voice, knowledge, doubao },
         { ...(FAST_IDLE ? { boredMs: 10000, sleepyMs: 20000, tickMs: 2000 } : {}), characterId: activeCharacter });
       await pet.init();
+      const perception = new PerceptionService({ llm, memory });
       // 小球模式：气泡跟随小球头顶（须在 BALL_MODE/sprite 定义之后）
       if (typeof BALL_MODE !== 'undefined' && BALL_MODE && sprite && sprite._root) {
         bubble.followTarget(() => ({

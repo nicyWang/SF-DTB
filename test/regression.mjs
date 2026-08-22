@@ -34,6 +34,17 @@ async function doubao(d) {
 // ---------- UI 组 ----------
 async function ui(d) {
   console.log('== UI ==');
+  const renderer = await d.ev("(function(){ const s = window.liveRefs?.sprite; return { type: s?.getModelInfo?.()?.type || (s?._root ? 'ball' : 'unknown'), official: !!window.__emotionBall, active: !!window.__emotionBall?._active, emotion: s?._currentEmotion, size: s?.container?.offsetWidth }; })()");
+  d.check('官方Emotion Ball接入', renderer.v?.type === 'emotion-ball' && renderer.v?.official === true, JSON.stringify(renderer.v));
+  d.check('官方动画循环运行', renderer.v?.active === true, JSON.stringify(renderer.v));
+  d.check('小球基础尺寸有效', renderer.v?.size === 132, JSON.stringify(renderer.v));
+  const emotion = await d.ev("(function(){ const s = window.liveRefs.sprite; return { ok: s.setEmotion('happy'), emotionId: window.__emotionBall.emotionId }; })()");
+  d.check('Pet情绪映射官方emotionId', emotion.v?.ok === true && emotion.v?.emotionId === '10', JSON.stringify(emotion.v));
+  const motion = await d.ev("(function(){ const s = window.liveRefs.sprite; return s.playMotion('TapBody', 0); })()");
+  d.check('官方小球动作触发', motion.v === true);
+  const replyEmotion = await d.ev("(async function(){ const s = window.liveRefs.sprite; window.pet.setEmotion('happy', 5000); const before = { id: window.__emotionBall.emotionId, preserved: s._replyEmotion }; await new Promise(r => setTimeout(r, 100)); s.lipSpeak(1200); await new Promise(r => setTimeout(r, 100)); return { before, after: window.__emotionBall.emotionId }; })()");
+  d.check('回答口型不覆盖回复表情', replyEmotion.v?.before?.id === '10' && replyEmotion.v?.before?.preserved === true && replyEmotion.v?.after === '10', JSON.stringify(replyEmotion.v));
+  await d.ev("window.liveRefs.sprite.setEmotion('normal')");
   const dock = await d.ev("(function(){ const m = document.getElementById('mic-btn'); const r = m.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), pinned: typeof window.__uiPinned === 'function' }; })()");
   d.check('mic按钮40px+穿透钩子', dock.v?.w === 40 && dock.v?.pinned === true, JSON.stringify(dock.v));
   const focus = await d.ev("(function(){ const i = document.getElementById('chat-input'); const b = document.getElementById('chat-bar'); b.style.display='flex'; i.focus(); const f1 = document.activeElement === i; i.blur(); i.focus(); const f2 = document.activeElement === i; b.style.display='none'; return f1 && f2; })()");

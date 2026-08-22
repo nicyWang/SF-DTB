@@ -174,6 +174,7 @@ function initDoubaoIPC(ipcMain) {
         return done({ ok: false, error: 'WS创建失败: ' + err.message });
       }
       const timer = setTimeout(() => done({ ok: false, error: '连接超时(12s)' }), 12000);
+      timer.unref?.();
       const conn = { stats }; // 事件回调闭包统一走 ws.stats（防作用域错位）
       ws.on('open', () => {
         // StartConnection（无 session id）

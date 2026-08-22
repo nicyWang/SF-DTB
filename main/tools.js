@@ -196,21 +196,36 @@ const TOOLS = {
     return `已移动: ${a} → ${b}`;
   },
   open_app: async ({ name }) => {
-    const n = String(name || '').replace(/["`$]/g, '');
-    if (IS_WIN) {
-      // Windows：start 命令（cmd 内建）；常用中文名映射
-      const WIN_APP = { '微信': 'WeChat', '酷狗': 'kugou', '网易云音乐': 'cloudmusic', 'qq音乐': 'QQMusic', '浏览器': 'msedge', '备忘录': 'notepad', '计算器': 'calc', '记事本': 'notepad', '终端': 'wt' };
-      const target = WIN_APP[n.toLowerCase()] || WIN_APP[n] || n;
-      return execShell(`start "" "${target}"`);
-    }
-    return execShell(`open -a "${n}"`);
+    if (!isValidAppName(name)) throw new Error(`name 非法: ${String(name).slice(0, 60)}`);
+    const n = String(name).trim();
+    const target = IS_WIN
+      ? ({ '微信': 'WeChat', '酷狗': 'kugou', '网易云音乐': 'cloudmusic', 'qq音乐': 'QQMusic', '浏览器': 'msedge', '备忘录': 'notepad', '计算器': 'calc', '记事本': 'notepad', '终端': 'wt' }[n.toLowerCase()] || n)
+      : n;
+    return await new Promise((resolve, reject) => {
+      const command = IS_WIN ? 'cmd.exe' : 'open';
+      const args = IS_WIN ? ['/c', 'start', '', target] : ['-a', target];
+      execFile(command, args, { timeout: 15000 }, (err, _stdout, stderr) => {
+        if (err) reject(new Error(String(stderr || err.message).slice(0, 150)));
+        else resolve({ ok: true, target });
+      });
+    });
   },
   open_url: async ({ url }) => {
-    const u = String(url || '');
-    if (!/^https?:\/\//.test(u)) throw new Error('仅支持 http/https 链接');
-    const safe = u.replace(/["`$]/g, '');
-    if (IS_WIN) return execShell(`start "" "${safe}"`);
-    return execShell(`open "${safe}"`);
+    let u;
+    try {
+      u = new URL(String(url || ''));
+    } catch {
+      throw new Error('URL 格式非法');
+    }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('仅支持 http/https 链接');
+    return await new Promise((resolve, reject) => {
+      const command = IS_WIN ? 'cmd.exe' : 'open';
+      const args = IS_WIN ? ['/c', 'start', '', u.toString()] : [u.toString()];
+      execFile(command, args, { timeout: 15000 }, (err, _stdout, stderr) => {
+        if (err) reject(new Error(String(stderr || err.message).slice(0, 150)));
+        else resolve({ ok: true, url: u.toString() });
+      });
+    });
   },
   run_applescript: async ({ script }) => appleScript(script),
   shell: async ({ cmd }) => execShell(cmd),
@@ -223,7 +238,7 @@ const TOOLS = {
       const ps = `Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size); $bmp.Save('${out.replace(/\\/g, '\\\\')}'); $g.Dispose(); $bmp.Dispose()`;
       r = await runPowerShell(ps).then(t => !String(t).startsWith('执行失败'));
     } else {
-      r = await new Promise((resolve) => exec(`screencapture -x "${out}"`, { timeout: 10000 }, (err) => resolve(!err)));
+      r = await new Promise((resolve) => execFile('screencapture', ['-x', out], { timeout: 10000 }, (err) => resolve(!err)));
     }
     return r ? `截图已保存: ${out}` : '截图失败（macOS需屏幕录制权限/Windows可能失败）';
   },
@@ -499,6 +514,7 @@ return "已发送"`;
     if (String(r).startsWith('执行失败')) throw new Error(`微信发送失败: ${r}（需辅助功能权限，且微信需为登录状态）`);
     return `已通过微信发送给「${c}」: ${m}`;
   },
+  'tool-health': async () => ({ ok: true, tools: Object.keys(TOOLS).length }),
 };
 
 // ══ 虚拟鼠标键盘原语（操控电脑的"手"）——所有应用通用 ══
@@ -662,13 +678,7 @@ TOOLS['ui-click'] = async ({ name, app, index }) => {
       }
     } catch { /* ignore */ }
   }
-  let axArgs;
-  if (Number.isInteger(args?.index) && args.index >= 0) {
-    // 按索引点击（Codex 式）：与 ui-list 输出的 [N] 对齐，坐标由执行器自查——零传递误差
-    axArgs = ['axclick', '--idx', String(args.index)];
-  } else {
-    axArgs = ['axclick', n];
-  }
+  const axArgs = ['axclick', n];
   if (pid) axArgs.push('--pid', String(pid));
   const r = await runAx(axArgs);
   const rs = String(r);
@@ -716,6 +726,7 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'shell', description: '执行白名单shell命令（ls/cat/mkdir/cp/mv/open/say等）', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } } },
   { type: 'function', function: { name: 'screenshot', description: '截取全屏保存到/tmp（需要屏幕录制权限）', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'system_info', description: '获取系统信息（用户/内存/时间）', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'tool-health', description: '检查Agent工具层是否可用', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'open-app', description: '打开macOS应用（如 Safari、WeChat），仅允许字母数字空格名称', parameters: { type: 'object', properties: { appName: { type: 'string', description: '应用名，如 "Safari"' } }, required: ['appName'] } } },
   { type: 'function', function: { name: 'list-dir', description: '列目录（最多50项含类型），仅允许 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '目录路径，如 "~/Desktop"' } }, required: ['dirPath'] } } },
   { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒（到点弹给主人）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数（0<x≤43200）' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },

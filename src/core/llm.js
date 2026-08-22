@@ -50,7 +50,7 @@ class LLMService {
       res = await fetch(this._url('/chat/completions'), {
         method: 'POST',
         headers: this._headers(),
-        body: JSON.stringify({ model: this.config.model, messages }),
+        body: JSON.stringify({ model: this.config.model, messages, stream: true, thinking: { type: 'disabled' } }),
       });
     } catch (err) {
       console.error('[LLMService] chat network error:', err);
@@ -59,7 +59,7 @@ class LLMService {
     if (!res.ok) {
       const errText = await this._errText(res);
       console.error(`[LLMService] chat HTTP ${res.status}:`, errText);
-      return this._friendlyError(null, res.status);
+      return this._friendlyError(null, res.status, errText);
     }
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
@@ -90,7 +90,14 @@ class LLMService {
         res = await fetch(this._url('/chat/completions'), {
           method: 'POST',
           headers: this._headers(),
-          body: JSON.stringify({ model: this.config.model, messages: msgs, tools, tool_choice: 'auto' }),
+        body: JSON.stringify({
+          model: this.config.model,
+          messages: msgs,
+          thinking: { type: 'disabled' }, // 思考型模型(豆包Seed2.1)会吞token不吐正文——语音对话要快
+          tools,
+          tool_choice: 'auto',
+          stream: true,
+        }),
         });
       } catch (err) {
         return this._friendlyError(err, null);
@@ -98,12 +105,18 @@ class LLMService {
       if (!res.ok) {
         const errText = await this._errText(res);
         console.error(`[LLMService] tools HTTP ${res.status}:`, errText);
-        return this._friendlyError(null, res.status);
+        return this._friendlyError(null, res.status, await this._errText(res));
+      }
+      const full = await this._readToolStream(res, onToolCall);
+      if (full !== null) {
+        if (!full.trim()) return '（模型返回空，请重试）';
+        return full;
       }
       const data = await res.json();
       const msg = data?.choices?.[0]?.message;
       if (!msg) return '（模型返回空，请重试）';
-      let toolCalls = msg.tool_calls;
+      let toolCalls = this._lastToolCalls || msg.tool_calls;
+      this._lastToolCalls = null;
       // 无工具调用 且 首轮 且 用户消息像操作指令 → glm-4-flash 工具多时"选择困难"不发起；
       // 二阶段：tool_choice:'required' 强制重试一次（判断该不该调由意图启发式把关）
       if ((!toolCalls || !toolCalls.length) && round === 0) {
@@ -114,15 +127,23 @@ class LLMService {
             const res2 = await fetch(this._url('/chat/completions'), {
               method: 'POST',
               headers: this._headers(),
-              body: JSON.stringify({ model: this.config.model, messages: msgs, tools, tool_choice: 'required' }),
+              body: JSON.stringify({
+                model: this.config.model,
+                messages: msgs,
+                thinking: { type: 'disabled' },
+                tools,
+                tool_choice: 'required',
+                stream: true,
+              }),
             });
             if (res2.ok) {
-              const data2 = await res2.json();
-              const msg2 = data2?.choices?.[0]?.message;
-              if (msg2?.tool_calls?.length) {
+              const forcedFull = await this._readToolStream(res2);
+              const forcedCalls = this._lastToolCalls || [];
+              this._lastToolCalls = null;
+              if (forcedCalls.length) {
                 // 用强制结果继续（把 msg 换成 msg2）
-                msgs.push({ role: 'assistant', content: msg2.content || '', tool_calls: msg2.tool_calls });
-                for (const tc of msg2.tool_calls) {
+                msgs.push({ role: 'assistant', content: forcedFull || '', tool_calls: forcedCalls });
+                for (const tc of forcedCalls) {
                   const name = tc?.function?.name;
                   let args = {};
                   try { args = JSON.parse(tc.function.arguments || '{}'); } catch (e) { /* ignore */ }
@@ -170,6 +191,59 @@ class LLMService {
     return '（工具调用轮次太多，我先停一下～）';
   }
 
+  async _readToolStream(res, onToolCall) {
+    if (!res.body || typeof res.body.getReader !== 'function') return null;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    const toolBuffers = new Map();
+    const handleEvent = (eventText) => {
+      const lines = eventText.split(/\r?\n/);
+      const dataLines = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim());
+      if (!dataLines.length) return;
+      const payload = dataLines.join('\n');
+      if (payload === '[DONE]') return;
+      let json;
+      try { json = JSON.parse(payload); } catch { return; }
+      const delta = json?.choices?.[0]?.delta;
+      if (!delta) return;
+      if (typeof delta.content === 'string' && delta.content) content += delta.content;
+      for (const call of delta.tool_calls || []) {
+        const index = call.index ?? 0;
+        if (!toolBuffers.has(index)) toolBuffers.set(index, { id: '', name: '', arguments: '' });
+        const item = toolBuffers.get(index);
+        if (call.id) item.id = call.id;
+        if (call.function?.name) item.name = call.function.name;
+        if (call.function?.arguments) item.arguments += call.function.arguments;
+      }
+    };
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split(/\r?\n\r?\n/);
+        buffer = events.pop() ?? '';
+        for (const event of events) handleEvent(event);
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) handleEvent(buffer);
+    } catch (err) {
+      console.error('[LLMService] tools stream read error:', err);
+      if (!content) return null;
+    }
+    if (toolBuffers.size) {
+      this._lastToolCalls = [...toolBuffers.entries()].sort((a, b) => a[0] - b[0]).map(([, item]) => ({
+        id: item.id,
+        function: { name: item.name, arguments: item.arguments || '{}' },
+      }));
+      return '';
+    }
+    this._lastToolCalls = null;
+    return content;
+  }
+
   /**
    * 流式对话
    * @param {Array} messages OpenAI 格式
@@ -187,7 +261,7 @@ class LLMService {
       res = await fetch(this._url('/chat/completions'), {
         method: 'POST',
         headers: this._headers(),
-        body: JSON.stringify({ model: this.config.model, messages, stream: true }),
+        body: JSON.stringify({ model: this.config.model, messages, stream: true, thinking: { type: 'disabled' } }),
       });
     } catch (err) {
       console.error('[LLMService] chatStream network error:', err);
@@ -198,7 +272,7 @@ class LLMService {
     if (!res.ok) {
       const errText = await this._errText(res);
       console.error(`[LLMService] chatStream HTTP ${res.status}:`, errText);
-      const msg = this._friendlyError(null, res.status);
+      const msg = this._friendlyError(null, res.status, await this._errText(res));
       onChunk(msg);
       return msg;
     }
@@ -285,7 +359,7 @@ class LLMService {
     if (!res.ok) {
       const errText = await this._errText(res);
       console.error(`[LLMService] vision HTTP ${res.status}:`, errText);
-      return this._friendlyError(null, res.status);
+      return this._friendlyError(null, res.status, await this._errText(res));
     }
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
@@ -412,13 +486,18 @@ class LLMService {
 
   // ---------- 内部：友好错误 ----------
 
-  _friendlyError(err, status) {
+  _friendlyError(err, status, errText = '') {
     if (err && /Failed to fetch|NetworkError|fetch failed|ECONNREFUSED|ENOTFOUND/i.test(String(err))) {
       return '（网络连接失败：请检查网络，以及 baseURL 是否正确可达）';
     }
     if (status === 401) return '（鉴权失败：API Key 未填写或无效）';
     if (status === 403) return '（无权限：该 Key 无权访问此模型，或账号受限）';
-    if (status === 404) return '（接口不存在：请检查 baseURL，应形如 https://api.openai.com/v1）';
+    if (status === 404) {
+      if (/InvalidEndpointOrModel|model or endpoint/i.test(errText)) {
+        return '（模型或推理接入点不存在/无权限：请到火山方舟开通模型，并把“模型”改成 ep-xxx 或可用模型 ID）';
+      }
+      return '（接口不存在：请检查 baseURL，应形如 https://api.openai.com/v1）';
+    }
     if (status === 429) return '（请求受限：调用过于频繁或额度不足，请稍后再试）';
     if (status >= 500) return `（服务端错误 HTTP ${status}：请稍后重试或更换端点）`;
     if (err) return `（请求出错：${String(err && err.message ? err.message : err)}）`;

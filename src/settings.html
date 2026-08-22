@@ -312,9 +312,12 @@
       <select id="llm-preset">
         <option value="">手动填写</option>
         <option value="doubao">豆包大模型（火山方舟）</option>
-        <option value="zhipu">智谱 GLM</option>
-        <option value="openai">OpenAI</option>
-        <option value="deepseek">DeepSeek</option>
+      <option value="zhipu">智谱 GLM</option>
+      <option value="openai">OpenAI</option>
+      <option value="deepseek">DeepSeek</option>
+      <option value="moonshot">月之暗面 Kimi</option>
+      <option value="qwen">阿里通义千问</option>
+      <option value="siliconflow">硅基流动</option>
       </select>
       <div class="hint" style="font-size:11px">选豆包=全家桶（语音识别/合成/大脑+实时语音全火山）。需在火山方舟控制台创建"推理接入点"，模型填 ep-xxx 或 doubao-1.5-pro-32k，Key 填方舟 API Key。</div>
     </div>
@@ -537,7 +540,7 @@
     <div class="hint" style="margin-bottom:8px">
       端到端实时语音大模型：说完即答（几百毫秒），服务端智能断句+自动打断，最接近打电话体验。<br>
       未配置时自动使用普通模式（录音→识别→回复）。开通：
-      <a href="#" onclick="require('electron').shell.openExternal('https://console.volcengine.com/speech/service/8');return false" style="color:#5b8cff">火山引擎·语音技术</a>
+      <a href="https://console.volcengine.com/speech/service/8" target="_blank" rel="noopener noreferrer" style="color:#5b8cff">火山引擎·语音技术</a>
     </div>
     <div class="row">
       <label for="db-appid">App ID</label>
@@ -653,6 +656,11 @@
     <div class="card"><div class="row"><label>版本</label><span>v2.0 · desktop-pet</span></div><div class="row"><label>日志导出</label><button id="btn-export-logs" class="btn">导出（排障用）</button></div></div>
   </section>
   </main>
+  <footer class="save-bar">
+    <button id="btn-reload" class="btn">还原配置</button>
+    <button id="btn-save" class="btn primary">保存全部设置</button>
+  </footer>
+  <div id="toast" role="status" aria-live="polite"></div>
   <script type="module">
     // ================== 模块导入 ==================
     import { LLMService } from './core/llm.js';
@@ -798,21 +806,35 @@
     }
 
     function saveAll() {
-      const cfg = collectConfig();
-      localStorage.setItem(KEYS.llm, JSON.stringify(cfg.llm));
-      localStorage.setItem(KEYS.perception, JSON.stringify(cfg.perception));
-      localStorage.setItem(KEYS.danmaku, JSON.stringify(cfg.danmaku));
-      localStorage.setItem(KEYS.voice, JSON.stringify(cfg.voice));
-      localStorage.setItem('pet-voice-engine', $('voice-engine').value);
-      localStorage.setItem('pet-asr-config', JSON.stringify({ provider: $('asr-preset').value === 'volc' ? 'volc' : '', baseURL: $('asr-base').value.trim(), apiKey: $('asr-key').value.trim(), model: $('asr-model').value.trim(), appId: $('asr-appid').value.trim(), accessToken: $('asr-token').value.trim(), _preset: $('asr-preset').value }));
-      localStorage.setItem('pet-tts-config', JSON.stringify({ baseURL: $('tts-base').value.trim(), apiKey: $('tts-key').value.trim(), model: $('tts-model').value.trim(), _preset: $('tts-preset').value }));
-      localStorage.setItem('pet-doubao-realtime-config', JSON.stringify(cfg.doubao));
-      localStorage.setItem('pet-avatar-config', JSON.stringify(cfg.avatar));
-      showToast('已保存全部设置');
-      renderDebug();
-      // 通知宠物主窗口配置已更新（preload把IPC中继为PetEvents事件'settings:updated'）
-      if (window.windowAPI && window.windowAPI.notifySettingsUpdated) {
-        window.windowAPI.notifySettingsUpdated(['llm', 'perception', 'danmaku', 'voice']);
+      const button = $('btn-save');
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.textContent = '保存中…';
+      try {
+        const cfg = collectConfig();
+        localStorage.setItem(KEYS.llm, JSON.stringify(cfg.llm));
+        localStorage.setItem(KEYS.perception, JSON.stringify(cfg.perception));
+        localStorage.setItem(KEYS.danmaku, JSON.stringify(cfg.danmaku));
+        localStorage.setItem(KEYS.voice, JSON.stringify(cfg.voice));
+        localStorage.setItem('pet-voice-engine', $('voice-engine').value);
+        localStorage.setItem('pet-asr-config', JSON.stringify({ provider: $('asr-preset').value === 'volc' ? 'volc' : '', baseURL: $('asr-base').value.trim(), apiKey: $('asr-key').value.trim(), model: $('asr-model').value.trim(), appId: $('asr-appid').value.trim(), accessToken: $('asr-token').value.trim(), _preset: $('asr-preset').value }));
+        localStorage.setItem('pet-tts-config', JSON.stringify({ baseURL: $('tts-base').value.trim(), apiKey: $('tts-key').value.trim(), model: $('tts-model').value.trim(), _preset: $('tts-preset').value }));
+        localStorage.setItem('pet-doubao-realtime-config', JSON.stringify(cfg.doubao));
+        localStorage.setItem('pet-avatar-config', JSON.stringify(cfg.avatar));
+        renderDebug();
+        if (window.windowAPI && window.windowAPI.notifySettingsUpdated) {
+          window.windowAPI.notifySettingsUpdated(['llm', 'perception', 'danmaku', 'voice']);
+        }
+        button.textContent = '✓ 已保存';
+        showToast('✓ 已保存全部设置，模型已生效');
+      } catch (err) {
+        button.textContent = '保存失败';
+        showToast('保存失败：' + (err?.message || '本地存储不可用'));
+      } finally {
+        setTimeout(() => {
+          button.disabled = false;
+          button.textContent = originalText;
+        }, 1200);
       }
     }
 
@@ -932,6 +954,8 @@
     }
 
     function renderDebug() {
+      const output = $('debug-config');
+      if (!output) return;
       const out = {};
       for (const [k, key] of Object.entries(KEYS)) {
         out[k] = localStorage.getItem(key) ? loadJSON(key, null) : '(未设置)';
@@ -942,7 +966,7 @@
         ? loadJSON(`pet-personality-${cid}`, null) : '(未设置)';
       out.memoryCurrent = localStorage.getItem(`pet-memory-${cid}`)
         ? loadJSON(`pet-memory-${cid}`, null) : '(未设置)';
-      $('debug-config').textContent = JSON.stringify(out, null, 2);
+      output.textContent = JSON.stringify(out, null, 2);
     }
 
     // ============================================================
@@ -1464,7 +1488,15 @@
   // 厂商预设自动填充
   (function () {
     var PRESETS = {
-      llm: { doubao: ['https://ark.cn-beijing.volces.com/api/v3', 'doubao-1.5-pro-32k'], zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-4-flash'], openai: ['https://api.openai.com/v1', 'gpt-4o-mini'], deepseek: ['https://api.deepseek.com/v1', 'deepseek-chat'] },
+      llm: {
+        doubao: ['https://ark.cn-beijing.volces.com/api/v3', 'doubao-seed-2-1-pro-260628'],
+        zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-4-flash'],
+        openai: ['https://api.openai.com/v1', 'gpt-4o-mini'],
+        deepseek: ['https://api.deepseek.com/v1', 'deepseek-chat'],
+        moonshot: ['https://api.moonshot.cn/v1', 'kimi-k2-0905-preview'],
+        qwen: ['https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen-plus'],
+        siliconflow: ['https://api.siliconflow.cn/v1', 'Qwen/Qwen2.5-7B-Instruct']
+      },
       asr: { zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-asr-2512'], volc: ['https://ark.cn-beijing.volces.com/api/v3', ''], openai: ['https://api.openai.com/v1', 'whisper-1'], groq: ['https://api.groq.com/openai/v1', 'whisper-large-v3'] },
       tts: { zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-tts'], volc: ['https://ark.cn-beijing.volces.com/api/v3', ''], openai: ['https://api.openai.com/v1', 'tts-1'] }
     };

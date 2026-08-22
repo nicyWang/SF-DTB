@@ -1135,7 +1135,12 @@ class VoiceService {
             text: String(text || '').slice(0, 800),
             ssml: '',
             speaker: ttsCfg.speaker || 'zh_female_cancan_mars_bigtts',
-            audio_params: { format: 'mp3', sample_rate: 24000, bit_rate: 128000 },
+          // 情感参数（opts.emotion 由 pet 层按回复情绪传入）：excited→愉快略快，sad/sleepy→低沉放缓
+          emotion: ['happy', 'sad', 'sleepy', 'bored', 'angry'].includes(opts.emotion)
+            ? { emotion: opts.emotion, level: 'medium' }
+            : undefined,
+            audio_params: { format: 'mp3', sample_rate: 24000, bit_rate: 128000,
+            speech_rate: opts.emotion === 'excited' ? 8 : ((opts.emotion === 'sad' || opts.emotion === 'sleepy') ? -10 : 0) },
           },
         }),
       });

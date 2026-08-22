@@ -6,6 +6,8 @@
   "scripts": {
     "start": "env -u ELECTRON_RUN_AS_NODE electron .",
     "dev": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "test": "node test/character-studio-test.mjs && node test/double-character-test.mjs && node test/knowledge-test.mjs && node test/memory-test.mjs && node test/personality-test.mjs && node test/perception-test.mjs && node test/voice-test.mjs && node test/sse-fix-test.mjs",
+    "test:tools": "node test/agent-tools-test.mjs",
     "test:studio": "node test/character-studio-test.mjs"
   },
   "dependencies": {

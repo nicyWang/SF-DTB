@@ -108,10 +108,13 @@ const TOOL_SPECS = [
   { type: 'function', function: { name: 'shell', description: '执行白名单shell命令（ls/cat/mkdir/cp/mv/open/say等）', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } } },
   { type: 'function', function: { name: 'screenshot', description: '截取全屏保存到/tmp（需要屏幕录制权限）', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'system_info', description: '获取系统信息（用户/内存/时间）', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'tool-health', description: '检查Agent工具层是否可用', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'open-app', description: '打开macOS应用（安全版：应用名仅限字母数字空格，如 Safari / WeChat / Netease Music）', parameters: { type: 'object', properties: { appName: { type: 'string', description: '应用名' } }, required: ['appName'] } } },
   { type: 'function', function: { name: 'list-dir', description: '列出目录内容（安全版：仅限 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy，最多50项）', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '如 ~/Desktop' } }, required: ['dirPath'] } } },
   { type: 'function', function: { name: 'set-reminder', description: '设置定时提醒：N分钟后提醒主人某事（到点会弹出通知）', parameters: { type: 'object', properties: { minutes: { type: 'number', description: '分钟数(1-720)' }, text: { type: 'string', description: '提醒内容' } }, required: ['minutes', 'text'] } } },
   { type: 'function', function: { name: 'cancel-reminder', description: '取消一个未触发的提醒', parameters: { type: 'object', properties: { id: { type: 'string', description: 'set-reminder返回的id' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'type-text', description: '在当前焦点或指定坐标输入文本', parameters: { type: 'object', properties: { text: { type: 'string', description: '要输入的文本' }, x: { type: 'number', description: '目标输入框屏幕X坐标' }, y: { type: 'number', description: '目标输入框屏幕Y坐标' } }, required: ['text'] } } },
+  { type: 'function', function: { name: 'click-at', description: '点击屏幕坐标（默认静默，不移动光标）', parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, silent: { type: 'boolean', description: 'true=静默按压；false=移动光标真实点击' } }, required: ['x', 'y'] } } },
 
   { type: 'function', function: { name: 'clipboard-read', description: '读取剪贴板文本内容（如"我刚复制的内容"）', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'clipboard-write', description: '把文本写入剪贴板（复制）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要复制的文本' } }, required: ['text'] } } },
@@ -236,10 +239,11 @@ class PetController {
       return false;
     }
     this.state.emotion = target;
+    if (target !== 'normal' && decayMs) this.live2d._replyEmotion = true;
+    else if (target === 'normal') this.live2d._replyEmotion = false;
     this._events?.emit?.('emotion:change', { emotion: target });
 
-    const motion = EMOTION_MOTIONS[target] || EMOTION_MOTIONS.normal;
-    this.live2d.playMotion(motion.group, motion.index);
+    this.live2d.setEmotion(target);
 
     if (this._emotionTimer) clearTimeout(this._emotionTimer);
     if (target !== 'normal') {
@@ -357,6 +361,10 @@ class PetController {
     for (const [re, emo] of rules) {
       if (re.test(txt)) { this.setEmotion(emo, 8000); return; }
     }
+    if (/[!?！？]{1,3}$/.test(String(reply || '').trim())) { this.setEmotion('excited', 6000); return; }
+    if (/^(好的|明白|收到|当然|可以|没问题|我来|帮你)/.test(String(reply || '').trim())) {
+      this.setEmotion('happy', 6000);
+    }
   }
 
   async chat(userText) {
@@ -374,7 +382,7 @@ class PetController {
     this._chatting = true;
     this.touch();
     // 回复期间冻结小球移动（气泡跟着球跑会看不清）
-    this._setFrozen(true);
+    this._setFrozen(false);
     try {
       // 1. 情绪粗判（关键词）→ 性格事件
       if (PRAISE_RE.test(text)) {
@@ -391,7 +399,7 @@ class PetController {
       // 3. 组装 messages（人设system + 知识库检索 + 记忆块 + 最近对话）
       let messages = await this._buildMessages(text);
         // CUA 行动回路：操作类指令（点/关/拖/填屏幕目标）→ 自动截屏-定位-执行-验证循环
-        if (this._isScreenAction?.(text) && window.screenAPI?.getScreenshot && !this._screenLooping) {
+        if (this._isScreenAction?.(text) && this._canCaptureScreen() && !this._screenLooping) {
           this._screenLooping = true;
           try {
             const result = await this._screenActionLoop(text);
@@ -439,11 +447,13 @@ class PetController {
               this.bubble.showHint(`🔧 ${labels[name] || name}中…`);
             });
           this.bubble.showText(reply, Math.max(4000, reply.length * 120));
+          this._applyReplyEmotion(text, reply);
         } else {
           reply = await this.llm.chatStream(messages, (chunk) => {
             this.bubble.streamAppend(chunk);
           });
           this.bubble.streamEnd();
+          this._applyReplyEmotion(text, reply);
         }
       } finally {
         clearInterval(lipTimer);
@@ -484,6 +494,12 @@ class PetController {
   /** 语音状态广播（index.html 麦克风按钮据此切换形态） */
   _emitVoiceState(phase) {
     this._events?.emit?.('voice:state', { phase });
+    if (phase === 'thinking' || phase === 'speaking') {
+      this.live2d?.setVoicePhase?.(phase);
+    } else if (phase === 'idle') {
+      // 语音结束：回落到当前情绪状态（而非卡在 talking 表情）
+      this.live2d?.setEmotion?.(this.state.emotion || 'normal');
+    }
   }
 
   /**
@@ -562,6 +578,7 @@ class PetController {
           }
         },
         onState: (s) => this._emitVoiceState(s),
+        onAudioEnd: () => this.avatar?.feedAudioEnd?.(),
         onInterrupt: () => {
           this.bubble.showHint?.('（好，你说～）', 1500);
         },
@@ -731,7 +748,7 @@ class PetController {
 
         // 屏幕操作类 → CUA 行动回路（截屏→定位→执行→验证循环，自动重试）
         let reply;
-        if (this._isScreenAction?.(text) && window.screenAPI?.getScreenshot) {
+        if (this._isScreenAction?.(text) && this._canCaptureScreen()) {
           const result = await this._screenActionLoop(text);
           reply = result;
           this.bubble.showText(result, Math.max(4000, result.length * 120));
@@ -838,6 +855,10 @@ class PetController {
     return /(点|点击|单击|双击|右键|关掉|关闭|按下|勾选|选择|拖|输入|填).{0,20}(它|那个|这个|按钮|弹窗|窗口|选项|框|图标|位置|搜索|输入)|帮我(点|关|拖|选|填|处理)|(点|关)一下(它|那个)|在.{0,12}(里|中|上面).{0,6}(输入|填|写)|^(播放|放).{0,12}(歌|音乐|电台|电台歌曲|歌单)|(播放|放一?首)/.test(text);
   }
 
+  _canCaptureScreen() {
+    return typeof window.screenAPI?.getScreenshot === 'function';
+  }
+
   async _screenActionLoop(task) {
     this._screenLooping = true;
     try {
@@ -898,9 +919,9 @@ class PetController {
           if (r?.ok && r.result) axTree = String(r.result);
         } catch { /* ignore */ }
         if (step === 1) axTreeBefore = axTree; // 记录初始状态
-        const b64 = window.screenAPI?.getScreenshot ? await window.screenAPI.getScreenshot() : null;
+        const b64 = this._canCaptureScreen() ? await window.screenAPI.getScreenshot() : null;
         if (!b64 && !axTree) return '截屏失败，没法操作屏幕';
-        const img = b64 ? 'data:image/png;base64,' + b64 : null;
+        const img = b64 || null;
         if (!img) return '无法截屏';
         const treeHint = axTree
           ? `\n【可交互元素表：索引 角色 名称 状态 @坐标】\n${axTree.split('\n').slice(0, 35).join('\n')}`
@@ -1029,7 +1050,7 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
         this.doubao?.suppressAudio?.();
         this._emitVoiceState('thinking');
         let result;
-        if (this._isScreenAction?.(cmd) && window.screenAPI?.getScreenshot) {
+        if (this._isScreenAction?.(cmd) && this._canCaptureScreen()) {
           result = await this._screenActionLoop(cmd); // 屏幕操作→CUA回路（含AX直击快通路）
         } else {
           const reply = await this.chat(cmd); // 其他→GLM 工具链
@@ -1067,12 +1088,11 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
    */
   async _analyzeScreenFor(query) {
     try {
-      if (!window.screenAPI?.getScreenshot) return '';
+      if (!this._canCaptureScreen()) return '';
       this.bubble.showHint?.('📸 正在看你的屏幕…', 2000);
       const b64 = await window.screenAPI.getScreenshot();
       if (!b64) return '';
-      const img = 'data:image/png;base64,' + b64;
-      const analysis = await this.llm.vision(img,
+      const analysis = await this.llm.vision(b64,
         `主人说："${query}"。请分析这张屏幕截图：1)屏幕上有什么（应用/窗口/主要内容，30字内）2)与主人请求相关的目标元素在图中的位置（归一化坐标0-1000，左上原点）3)操作类请求给出建议动作。严格JSON：{"scene":"描述","target":{"name":"元素名","x":123,"y":456,"action":"click|close|none"}}`, 'image/png');
       const m = String(analysis || '').match(/\{[\s\S]*\}/);
       if (!m) return `【屏幕实况】刚截了你的屏幕，画面内容：${String(analysis).slice(0, 80)}`;
@@ -1196,7 +1216,7 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
       // 0) 豆包 TTS（火山语音合成大模型·灿灿甜美女声——与极速模式同源豆包嗓，体验统一）
       if (outcome === 'none' && typeof this.voice.speakDoubao === 'function') {
         try {
-          const r = await this.voice.speakDoubao(reply, { onStart: startLip });
+          const r = await this.voice.speakDoubao(reply, { onStart: startLip, emotion: this.state.emotion });
           if (r) outcome = 'full';
         } catch (e) { console.warn('[PetController] 豆包TTS失败，降级:', e?.message); }
       }

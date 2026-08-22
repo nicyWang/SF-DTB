@@ -14,6 +14,9 @@ class AvatarLive {
     this._active = false;
     this._rtcEngine = null;
     this._videoEl = null;
+    this._startTimer = null;
+    this._startTimerResult = null;
+    this._waitTimer = null;
     this._unbind = [];
     this._handlers = {};
   }
@@ -42,10 +45,17 @@ class AvatarLive {
     const onEvent = (_e, msg) => this._onEvent(msg);
     this.avatarAPI.onEvent(onEvent);
     this._unbind.push(() => this.avatarAPI.offEvent(onEvent));
+    this._startTimer = setTimeout(() => {
+      const result = this._startTimerResult;
+      this._startTimerResult = null;
+      result?.({ ok: false, error: '开播超时(18s)' });
+    }, 18000);
     const r = await Promise.race([
       this.avatarAPI.start(cfg).catch(e => ({ ok: false, error: String(e) })),
-      new Promise(res => setTimeout(() => res({ ok: false, error: '开播超时(18s)' }), 18000)),
+      new Promise(res => this._startTimerResult = res),
     ]);
+    clearTimeout(this._startTimer);
+    this._startTimer = null;
     if (!r || r.ok !== true) {
       handlers.onError?.(r?.error || '数字人开播失败');
       this._unbindAll();
@@ -54,13 +64,23 @@ class AvatarLive {
     // 等待 live-started 事件（含 RTC 参数）再拉流
     await new Promise((res) => {
       this._waitLive = res;
-      setTimeout(() => { this._waitLive = null; res(); }, 8000);
+      this._waitTimer = setTimeout(() => { this._waitLive = null; res(); }, 8000);
     });
+    clearTimeout(this._waitTimer);
+    this._waitTimer = null;
     return this._active;
   }
 
   async stop() {
     this._active = false;
+    if (this._startTimer) clearTimeout(this._startTimer);
+    this._startTimer = null;
+    this._startTimerResult?.();
+    this._startTimerResult = null;
+    this._waitLive?.();
+    this._waitLive = null;
+    if (this._waitTimer) clearTimeout(this._waitTimer);
+    this._waitTimer = null;
     this._teardownRtc();
     this._unbindAll();
     try { await this.avatarAPI.stop(); } catch { /* ignore */ }

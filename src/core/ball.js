@@ -22,6 +22,9 @@ export class BallRenderer {
     this._speaking = false;
     this._speakEnd = 0;
     this._tapPulseUntil = 0;
+    this._motionUntil = 0;
+    this._motionKind = null;
+    this._motionPhase = 0;
 
     // 漫游（与sprite.js同款状态机字段，供主循环复用）
     this._roam = { enabled: true, state: 'stand', targetX: 0, speed: 130,
@@ -40,6 +43,15 @@ export class BallRenderer {
     this._breathPhase = 0;
     this._blinkEnd = 0; this._nextBlinkAt = Date.now() + 3000 + Math.random() * 3000;
     this._hearts = [];
+    this._pose = {
+      bodyColor: 0,
+      bodyColorTarget: 0xf3f0ea,
+      bodyX: 0,
+      bodyY: 0,
+      rotate: 0,
+      scaleX: 1,
+      scaleY: 1,
+    };
 
     // ===== 绘制 =====
     this._root = new PIXI.Container();          // 根（位置/缩放）
@@ -128,7 +140,8 @@ export class BallRenderer {
 
     // 尺寸/位置（等容器布局后
     setTimeout(() => this._fitToContainer(), 0);
-    window.addEventListener('resize', () => this._fitToContainer());
+    this._onResize = () => this._fitToContainer();
+    window.addEventListener('resize', this._onResize);
   }
 
   // ============ 绘制 ============
@@ -136,21 +149,26 @@ export class BallRenderer {
   _drawBody() {
     const r = this._radius;
     this._body.clear();
-    // 主体渐变球（径向渐变用多层同心圆模拟）
-    this._body.beginFill(0x667eea, 1);
+    // 参考站的陶瓷质感：米白主体 + 左上柔光 + 边缘收深
+    const color = this._pose.bodyColor;
+    const lighter = this._blendColor(color, 0xffffff, 0.24);
+    const darker = this._blendColor(color, 0x000000, 0.14);
+    this._body.beginFill(lighter, 0.86);
+    this._body.drawCircle(-r * 0.08, -r * 0.12, r * 0.92);
+    this._body.endFill();
+    this._body.beginFill(color, 0.94);
     this._body.drawCircle(0, 0, r);
     this._body.endFill();
-    // 高光（左上）
-    this._body.beginFill(0xffffff, 0.35);
-    this._body.drawCircle(-r * 0.32, -r * 0.35, r * 0.28);
+    this._body.beginFill(darker, 0.2);
+    this._body.drawCircle(0, r * 0.08, r * 0.94);
     this._body.endFill();
-    this._body.beginFill(0xffffff, 0.18);
-    this._body.drawCircle(-r * 0.28, -r * 0.3, r * 0.38);
-    this._body.endFill();
-    // 底部阴影（增强立体）
-    this._body.beginFill(0x2d3a8c, 0.25);
-    this._body.drawEllipse(0, r * 0.72, r * 0.75, r * 0.3);
-    this._body.endFill();
+  }
+
+  _blendColor(from, to, amount) {
+    const r = ((from >> 16) & 255) * (1 - amount) + ((to >> 16) & 255) * amount;
+    const g = ((from >> 8) & 255) * (1 - amount) + ((to >> 8) & 255) * amount;
+    const b = (from & 255) * (1 - amount) + (to & 255) * amount;
+    return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
   }
 
   _drawFace() {
@@ -160,10 +178,10 @@ export class BallRenderer {
     const g = new PIXI.Graphics();
 
     // 眼睛（眨眼时高度压缩）
-    let eyeH = r * 0.22;
-    let eyeY = -r * 0.18;
-    const eyeLX = -r * 0.32, eyeRX = r * 0.32;
-    const eyeColor = 0x1a1a2e;
+    let eyeH = r * 0.24;
+    let eyeY = -r * 0.16;
+    const eyeLX = -r * 0.34, eyeRX = r * 0.31;
+    const eyeColor = 0x1a1a1a;
 
     if (emo === 'love') {
       // 喜爱：爱心眼
@@ -224,53 +242,53 @@ export class BallRenderer {
     } else {
       // 普通/说话：圆点眼
       g.beginFill(eyeColor, 1);
-      g.drawEllipse(eyeLX, eyeY, r * 0.085, eyeH);
-      g.drawEllipse(eyeRX, eyeY, r * 0.085, eyeH);
+      g.drawEllipse(eyeLX, eyeY, r * 0.095, eyeH);
+      g.drawEllipse(eyeRX, eyeY, r * 0.088, eyeH * 1.03);
       g.endFill();
       // 眼睛高光
       g.beginFill(0xffffff, 0.9);
-      g.drawCircle(eyeLX - r * 0.03, eyeY - r * 0.07, r * 0.03);
-      g.drawCircle(eyeRX - r * 0.03, eyeY - r * 0.07, r * 0.03);
+      g.drawCircle(eyeLX - r * 0.035, eyeY - r * 0.085, r * 0.032);
+      g.drawCircle(eyeRX - r * 0.03, eyeY - r * 0.085, r * 0.03);
       g.endFill();
     }
 
     // 腮红（开心时更红）
     if (emo === 'happy' || emo === 'normal') {
-      g.beginFill(0xff8fab, emo === 'happy' ? 0.55 : 0.3);
-      g.drawEllipse(-r * 0.55, r * 0.12, r * 0.14, r * 0.09);
-      g.drawEllipse(r * 0.55, r * 0.12, r * 0.14, r * 0.09);
+      g.beginFill(0xf4d3d0, emo === 'happy' ? 0.72 : 0.45);
+      g.drawEllipse(-r * 0.5, r * 0.18, r * 0.15, r * 0.075);
+      g.drawEllipse(r * 0.5, r * 0.18, r * 0.15, r * 0.075);
       g.endFill();
     }
 
     // 嘴（说话时开合动画由_tick实时改）
     const mouthY = r * 0.28;
-    g.lineStyle(r * 0.06, 0x1a1a2e, 1);
+    const ink = 0x1a1a1a;
+    g.lineStyle(r * 0.055, ink, 1);
     if (emo === 'happy' || emo === 'love') {
-      g.arc(0, mouthY - r * 0.12, r * 0.22, 0.15 * Math.PI, 0.85 * Math.PI);
+      g.arc(0, mouthY - r * 0.1, r * 0.18, 0.16 * Math.PI, 0.84 * Math.PI);
     } else if (emo === 'sad') {
-      g.arc(0, mouthY + r * 0.22, r * 0.2, 1.15 * Math.PI, 1.85 * Math.PI);
+      g.arc(0, mouthY + r * 0.18, r * 0.17, 1.16 * Math.PI, 1.84 * Math.PI);
     } else if (emo === 'angry') {
       g.moveTo(-r * 0.2, mouthY);
       g.quadraticCurveTo(-r * 0.1, mouthY - r * 0.09, 0, mouthY);
       g.quadraticCurveTo(r * 0.1, mouthY + r * 0.09, r * 0.2, mouthY);
     } else if (emo === 'surprised') {
-      g.beginFill(0x6b2d3e, 0.95);
-      g.drawEllipse(0, mouthY, r * 0.13, r * 0.17);
+      g.beginFill(ink, 0.92);
+      g.drawEllipse(0, mouthY, r * 0.1, r * 0.13);
       g.endFill();
     } else if (emo === 'sleepy') {
-      g.beginFill(0x6b2d3e, 0.9);
-      g.drawEllipse(0, mouthY, r * 0.09, r * 0.11);
-      g.endFill();
+      g.moveTo(-r * 0.11, mouthY);
+      g.lineTo(r * 0.11, mouthY);
     } else {
       // normal/talking：微笑（说话时_tick叠加开合椭圆）
-      g.arc(0, mouthY - r * 0.06, r * 0.18, 0.2 * Math.PI, 0.8 * Math.PI);
+      g.arc(0, mouthY - r * 0.04, r * 0.13, 0.22 * Math.PI, 0.78 * Math.PI);
     }
     this._face.addChild(g);
     if (emo === 'sleepy') {
-      const zt = new PIXI.Text('Z', { fontFamily: 'Arial', fontSize: r * 0.42, fontWeight: 'bold', fill: 0x8899ff });
+      const zt = new PIXI.Text('z', { fontFamily: 'Space Grotesk, Arial', fontSize: r * 0.38, fontWeight: 'bold', fill: 0xa8a296 });
       zt.x = r * 0.5; zt.y = -r * 0.95; zt.alpha = 0.85;
       this._face.addChild(zt);
-      const zt2 = new PIXI.Text('z', { fontFamily: 'Arial', fontSize: r * 0.32, fontWeight: 'bold', fill: 0x8899ff });
+      const zt2 = new PIXI.Text('z', { fontFamily: 'Space Grotesk, Arial', fontSize: r * 0.3, fontWeight: 'bold', fill: 0xa8a296 });
       zt2.x = r * 0.88; zt2.y = -r * 1.3; zt2.alpha = 0.6;
       this._face.addChild(zt2);
     }
@@ -291,8 +309,8 @@ export class BallRenderer {
     const g = this._talkMouth;
     g.clear();
     if (openAmount <= 0.05) return;
-    g.beginFill(0x6b2d3e, 0.95);
-    g.drawEllipse(0, this._mouthY + r * 0.08, r * 0.16 + openAmount * r * 0.06, r * 0.05 + openAmount * r * 0.16);
+    g.beginFill(0x1a1a1a, 0.92);
+    g.drawEllipse(0, this._mouthY + r * 0.07, r * 0.11 + openAmount * r * 0.045, r * 0.04 + openAmount * r * 0.12);
     g.endFill();
   }
 
@@ -316,8 +334,8 @@ export class BallRenderer {
     }
     // 阴影位置
     this._shadow.clear();
-    this._shadow.beginFill(0x000000, 0.18);
-    this._shadow.drawEllipse(this._baseX, this._groundY + this._radiusScaled * 0.9, this._radiusScaled * 0.8, this._radiusScaled * 0.16);
+    this._shadow.beginFill(0x736b5f, 0.16);
+    this._shadow.drawEllipse(this._baseX, this._groundY + this._radiusScaled * 0.9, this._radiusScaled * 0.72, this._radiusScaled * 0.13);
     this._shadow.endFill();
   }
 
@@ -330,6 +348,8 @@ export class BallRenderer {
 
     this._roamTick(dms);
     this._updateMouseFollow(now);
+
+    this._updatePose(dms);
 
     // 呼吸
     this._breathPhase += dms / 4000;
@@ -353,6 +373,16 @@ export class BallRenderer {
       tapS = 1 + Math.sin((this._tapPulseUntil - now) / 600 * Math.PI) * 0.08;
     }
 
+    // 具名动作：小球弹跳，替代原 Live2D TapBody 观感
+    let motionBounce = 0;
+    if (now < this._motionUntil && this._motionKind === 'tap' && !this._frozen) {
+      this._motionPhase += dms / 260;
+      motionBounce = Math.abs(Math.sin(Math.min(1, this._motionPhase) * Math.PI)) * 18;
+    } else if (this._motionKind) {
+      this._motionKind = null;
+      this._motionPhase = 0;
+    }
+
     // 说话嘴部开合
     if (this._speaking && now < this._speakEnd) {
       const t = (now / 130) % 1;
@@ -363,11 +393,11 @@ export class BallRenderer {
     }
 
     // 应用变换
-    const s = this._baseScale * this._userScale * breath * tapS;
-    this._root.scale.set(s, s * (this._currentEmotion === 'sad' ? 0.97 : 1));
+    const s = this._baseScale * this._userScale * tapS;
+    this._root.scale.set(s * this._pose.scaleX, s * this._pose.scaleY);
     this._root.x = this._baseX + this._followX;
-    this._root.y = this._baseY + this._followY - (this._roam.bounce || 0);
-    this._root.rotation = (this._roam.rot || 0) + this._followRot;
+    this._root.y = this._baseY + this._pose.bodyY + this._followY - (this._roam.bounce || 0) - motionBounce;
+    this._root.rotation = this._pose.rotate + (this._roam.rot || 0) + this._followRot;
     // 眨眼压缩五官
     if (blinkS < 1) this._face.scale.y = blinkS;
     else this._face.scale.y = 1;
@@ -380,8 +410,8 @@ export class BallRenderer {
     this._shadow.x = 0; this._shadow.y = 0;
     // 重画阴影位置（简单起见）
     this._shadow.clear();
-    this._shadow.beginFill(0x000000, 0.16 * shScale);
-    this._shadow.drawEllipse(this._baseX, this._groundY + this._radiusScaled * 0.92, this._radiusScaled * 0.8 * shScale, this._radiusScaled * 0.15 * shScale);
+    this._shadow.beginFill(0x736b5f, 0.14 * shScale);
+    this._shadow.drawEllipse(this._baseX, this._groundY + this._radiusScaled * 0.92, this._radiusScaled * 0.72 * shScale, this._radiusScaled * 0.12 * shScale);
     this._shadow.endFill();
 
     this._updateHearts(dms);
@@ -428,6 +458,42 @@ export class BallRenderer {
         rr.vy = 0; rr.bounce = 0; rr.rot = 0;
       }
     }
+  }
+
+  _updatePose(deltaMS) {
+    const t = 1 - Math.exp(-deltaMS / 90);
+    const p = this._pose;
+    if (Math.abs(p.bodyColorTarget - p.bodyColor) < 1) p.bodyColor = p.bodyColorTarget;
+    else p.bodyColor += (p.bodyColorTarget - p.bodyColor) * t;
+    const emotion = this._currentEmotion;
+    const active = !this._frozen && !this._dragging;
+    const breathing = 1 + Math.sin(this._breathPhase) * this._emotionBreath(emotion);
+    let bodyY = 0;
+    let rotate = 0;
+    if (active) {
+      const nowSec = now => now / 1000;
+      void nowSec;
+      const now = Date.now();
+      if (emotion === 'happy' || emotion === 'excited' || emotion === 'love') {
+        bodyY = Math.sin(now / 260) * this._radiusScaled * 0.035;
+      } else if (emotion === 'sad' || emotion === 'sleepy') {
+        bodyY = this._radiusScaled * 0.045;
+        rotate = -0.055;
+      } else if (emotion === 'angry') {
+        rotate = Math.sin(now / 100) * 0.012;
+      } else if (emotion === 'surprised') {
+        bodyY = -this._radiusScaled * 0.035;
+      }
+    }
+    p.bodyY += (bodyY - p.bodyY) * t;
+    p.rotate += (rotate - p.rotate) * t;
+    p.scaleY += (breathing - p.scaleY) * t;
+    p.scaleX += (1 - p.scaleX) * t;
+    this._drawBody();
+  }
+
+  _emotionBreath(emotion) {
+    return ({ normal: 0.012, talking: 0.011, happy: 0.017, excited: 0.018, love: 0.017, sad: 0.007, sleepy: 0.018, angry: 0.004, surprised: 0.006 }[emotion] || 0.01);
   }
 
   _updateMouseFollow(now) {
@@ -524,15 +590,32 @@ export class BallRenderer {
 
   setEmotion(emotion) {
     if (this._destroyed) return false;
-    if (!['normal', 'happy', 'sad', 'talking', 'excited', 'sleepy', 'angry', 'surprised', 'love'].includes(emotion)) return false;
-    this._currentEmotion = emotion;
+    const aliases = { bored: 'sleepy' };
+    const target = aliases[emotion] || emotion;
+    if (!['normal', 'happy', 'sad', 'talking', 'excited', 'sleepy', 'angry', 'surprised', 'love'].includes(target)) return false;
+    this._currentEmotion = target;
+    this._pose.bodyColorTarget = ({
+      normal: 0xf3f0ea,
+      talking: 0xf3f0ea,
+      happy: 0xf6efe4,
+      excited: 0xf7ecd9,
+      love: 0xf4d3d0,
+      sad: 0xedeae3,
+      sleepy: 0xeeebe4,
+      angry: 0xe4574a,
+      surprised: 0xf5efe6,
+    }[target] || 0xf3f0ea);
     this._drawFace();
     return true;
   }
 
   playMotion(motion, n) {
-    // 拍打等动作：脉冲
-    this._tapPulseUntil = Date.now() + 600;
+    // 兼容 PetController 的 Live2D motion group 参数：Idle/TapBody 均转小球动效
+    const kind = String(motion || '').toLowerCase();
+    this._motionKind = kind === 'tapbody' ? 'tap' : 'idle';
+    this._motionUntil = Date.now() + (this._motionKind === 'tap' ? 900 : 300);
+    this._motionPhase = 0;
+    this._tapPulseUntil = Date.now() + (this._motionKind === 'tap' ? 600 : 0);
     return true;
   }
 
@@ -568,7 +651,11 @@ export class BallRenderer {
     return this;
   }
   async setCharacter() { /* 小球无角色概念，no-op */ return this; }
-  setScale(v) { this._userScale = v || 1; this._fitToContainer(); }
+  setScale(v) {
+    const scale = Number(v);
+    this._userScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    this._fitToContainer();
+  }
   /** PetController契约：说话嘴部驱动（durationMs内嘴部开合） */
   lipSpeak(text, durationMs) {
     // 按文本长度估算时长（与SpriteRenderer同规则：字数×160ms）
@@ -612,7 +699,7 @@ export class BallRenderer {
     if (this._tickTimer) clearInterval(this._tickTimer);
     window.removeEventListener('mousemove', this._onDomMove);
     window.removeEventListener('mouseup', this._onDomUp);
-    window.removeEventListener('resize', () => this._fitToContainer());
+    window.removeEventListener('resize', this._onResize);
     for (const h of this._hearts) { if (h.sp.parent) h.sp.parent.removeChild(h.sp); h.sp.destroy(); }
     this._hearts = [];
     this._root.destroy({ children: true });

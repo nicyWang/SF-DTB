@@ -65,7 +65,7 @@ function killAvatar() {
   const w = ws;
   ws = null;
   starting = null;
-  if (w) { try { w.removeAllListeners(); } catch {} try { w.terminate(); } catch {} }
+  if (w) { try { w.removeAllListeners(); } catch { /* ignore */ } try { w.terminate(); } catch { /* ignore */ } }
 }
 
 function initAvatarIPC(ipcMain) {
@@ -87,6 +87,8 @@ function initAvatarIPC(ipcMain) {
         ws = new WebSocket(AV_URL);
       } catch (err) { return done({ ok: false, error: 'WS创建失败: ' + err.message }); }
       const timer = setTimeout(() => done({ ok: false, error: '开播超时(15s)' }), 15000);
+      const cleanup = () => clearTimeout(timer);
+      timer.unref?.();
       ws.on('open', () => {
         // 开播初始化
         ws.send(ctlFrame('00', {
@@ -116,7 +118,7 @@ function initAvatarIPC(ipcMain) {
         const code = body?.code;
         if (m && m[2] === '00' && code === 1000) {
           // 开播成功 → 下发 RTC 参数给渲染进程拉流
-          clearTimeout(timer);
+          cleanup();
           sendToRenderer('avatar-event', {
             type: 'live-started',
             rtc: {
@@ -129,7 +131,7 @@ function initAvatarIPC(ipcMain) {
           });
           done({ ok: true, liveId });
         } else if (code && code !== 1000) {
-          clearTimeout(timer);
+          cleanup();
           sendToRenderer('avatar-event', { type: 'error', data: body });
           done({ ok: false, error: `开播失败 code=${code}: ${body?.message || ''}` });
         } else {
@@ -137,8 +139,13 @@ function initAvatarIPC(ipcMain) {
           sendToRenderer('avatar-event', { type: 'event', data: body });
         }
       });
-      ws.on('error', (err) => { clearTimeout(timer); done({ ok: false, error: 'WS错误: ' + err.message }); });
-      ws.on('close', () => { sendToRenderer('avatar-event', { type: 'closed' }); ws = null; });
+      ws.on('error', (err) => { cleanup(); done({ ok: false, error: 'WS错误: ' + err.message }); });
+      ws.on('close', () => {
+        cleanup();
+        const closedSocket = ws;
+        ws = null;
+        sendToRenderer('avatar-event', { type: 'closed' });
+      });
     });
     return starting;
   });
