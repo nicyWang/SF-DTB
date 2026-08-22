@@ -536,8 +536,10 @@ class PetController {
     // ---- 引擎选择：voice-engine 配置（doubao=豆包端到端极速 | self=自建管线全能）----
     // 默认 self（GLM 原生工具调用、单一大脑、可调试）；极速纯聊天可切 doubao
     let engine = 'self';
-    try { engine = localStorage.getItem('pet-voice-engine') || 'self'; } catch { /* ignore */ }
-    const useDoubao = engine === 'doubao' && this.doubao?.isConfigured?.();
+    // 2026-08-22 统一语音架构：豆包WS（服务端VAD+识别+TTS代播）为主路；
+    // 引擎默认 doubao（已配置时），self=自建VAD链路作兜底（WS失败自动落）。
+    try { engine = localStorage.getItem('pet-voice-engine') || 'doubao'; } catch { /* ignore */ }
+    const useDoubao = engine !== 'self' && this.doubao?.isConfigured?.();
 
     // ---- 豆包端到端实时语音（几百ms延迟，服务端VAD打断）----
     if (useDoubao) {
@@ -546,34 +548,21 @@ class PetController {
       let interrupted = false; // 运行中断开（非启动失败）
       let failMsg = null;
       const ok = await this.doubao.start({
+        // ── 统一语音架构（2026-08-22 收敛）：豆包WS只当耳朵+嗓子，大脑唯一=本地chat ──
+        // 服务端VAD断句→识别→最终文本→全部走 this.chat（工具/记忆/性格/知识库全套生效）
+        // →回复由 doubao.say() 豆包音色代播。不再有 [DO:] 标签协议和两段式意图判断。
         onUserText: (text, interim) => {
-          if (interim) this.bubble.showHint?.(`你说：${text}`);
-          // 双保险①：豆包回复带 [DO:] → onReplyText 解析执行（主路径）
-          // 双保险②：豆包没带标签（模型不稳定）但转写明显是操作指令 → 3秒后兜底执行
-          if (!interim && text && !this._toolRouting) {
-            const ACTION = /^(打开|关闭|关掉|点击|点一下|点|启动|帮我.{0,10}(打开|关闭|点击|发|设)|设置?个?提醒|定个?提醒|发(微信|消息)|按(一下)?|输入|截屏|截图)/.test(text.trim());
-            if (ACTION) {
-              clearTimeout(this._doubaoFallbackT);
-              this._doubaoFallbackText = text.trim();
-              this._doubaoFallbackT = setTimeout(() => {
-                if (!this._toolRouting && this._voiceActive) {
-                  console.log('[PetController] DO兜底（豆包未带标签）:', this._doubaoFallbackText);
-                  this._execDoubaoCommand(this._doubaoFallbackText);
-                }
-              }, 3000); // 3秒窗口等豆包自己的 DO 标签，没等到就兜底
-            }
+          if (interim) {
+            this.bubble.showHint?.(`你说：${text}`);
+            return;
+          }
+          // 最终文本：一句话一路径——本地大脑
+          if (text && this._voiceActive && !this._toolRouting) {
+            this._execVoiceUnified(text.trim());
           }
         },
-        onReplyText: (delta) => {
-          this.bubble.streamAppend(delta);
-          // 豆包意图自判：回复含 [DO:指令] → 剥标签执行（豆包负责判断，渲染层只解析）
-          const m = /\[DO[:：]\s*([^\]\n]{2,80})\]/.exec(delta || '');
-          if (m && !this._toolRouting && this._voiceActive) {
-            clearTimeout(this._doubaoFallbackT); // 豆包带标签了，取消兜底
-            const cmd = m[1].trim();
-            console.log('[PetController] 豆包DO标签:', cmd);
-            this._execDoubaoCommand(cmd);
-          }
+        onReplyText: () => {
+          // 豆包bot自己的回复文本：忽略（大脑已统一本地；音频也被 suppress）
         },
         onState: (s) => this._emitVoiceState(s),
         onInterrupt: () => {
@@ -716,62 +705,56 @@ class PetController {
 
   /** 拿到完整用户语句 → chat → TTS 播报（可被打断）→ 继续听（打电话式循环） */
   /**
-   * 豆包实时模式·智能工具分流（两段式）：
-   * 第一段：LLM 判断是否需要调工具（含理解口语化表达如"打开微信/看看桌面"）
-   *   - 纯聊天 → 不介入（豆包低延迟回复）
-   *   - 工具意图 → 先让豆包回一句"好的，我来处理"（用户听到即时响应）
-   * 第二段：GLM+function-calling 执行 → 结果由豆包音色代播
-   * 防抖：执行期间重复指令直接忽略
+   * 统一语音执行器（2026-08-22 架构收敛）：
+   * 用户最终文本 → 一路经 this.chat（工具/记忆/性格/知识库）→ doubao.say() 代播。
+   * 无标签协议、无两段式意图判断——路径唯一。
+   * 她思考期间 suppress 豆包bot音频（防双声），说完恢复。
    */
-  _maybeVoiceToolRoute(text) {
-    if (!this._voiceActive || this._toolRouting) return;
+  _execVoiceUnified(text) {
+    if (!text || this._toolRouting) return;
     this._toolRouting = true;
     (async () => {
+      let replied = false;
       try {
-        // ── 第一段：LLM 意图判断（快，一次小请求）──
-        const needTool = await this._llmNeedTool(text);
-        if (!needTool) {
-          this._toolRouting = false;
-          return; // 纯聊天：不介入，豆包自己回复
-        }
-        // 豆包人设已含工具能力——它自己会爽快应答"好嘞马上打开"（无需我方补话，
-        // 之前补话导致"我没这个功能"+"好嘞帮你打开"双声打架）。此处只等它应答完。
-        this._emitVoiceState('speaking');
-        await new Promise(r => setTimeout(r, 2500));
-        if (!this._voiceActive) return;
-        // ── 第二段：执行 ──
-        this.doubao?.suppressAudio?.();
+        this.doubao?.suppressAudio?.();  // 思考期间丢弃豆包bot可能的多嘴
         this._emitVoiceState('thinking');
+        this.bubble.showHint?.(`你说：${text}`, 2500);
 
-        // 屏幕操作类 → CUA 行动回路（截屏→定位→执行→验证循环，自动重试）
         let reply;
+        // 屏幕操作类 → CUA 行动回路；其余 → chat 工具链
         if (this._isScreenAction?.(text) && this._canCaptureScreen()) {
-          const result = await this._screenActionLoop(text);
-          reply = result;
-          this.bubble.showText(result, Math.max(4000, result.length * 120));
+          reply = await this._screenActionLoop(text);
         } else {
-          this.bubble.showHint?.(`🔧 处理：${text.slice(0, 30)}`, 2500);
-          reply = await this.chat(text); // GLM + 工具链
+          reply = await this.chat(text);
         }
-        if (reply && this._voiceActive && this.doubao?.active) {
-          this.doubao.say?.(reply); // 豆包音色播结果
-          this.bubble.showText(reply, Math.max(4000, reply.length * 120));
-          this._emitVoiceState('speaking');
-          await new Promise(r => setTimeout(r, Math.min(15000, 1500 + reply.length * 180)));
-        } else if (reply) {
-          await this._speakReply(reply); // 降级链路
+
+        // 播报：豆包音色代播（WS在）；降级本地TTS链（WS已断）
+        const clean = String(reply || '').trim();
+        if (clean && this._voiceActive) {
+          this.bubble.showText(clean.slice(0, 150), Math.max(4000, clean.length * 120));
+          this._applyReplyEmotion(text, clean); // 表情跟回复情绪
+          if (this.doubao?.active) {
+            this.doubao.say?.(clean.slice(0, 200));
+            this._emitVoiceState('speaking');
+            replied = true;
+          } else {
+            await this._speakReply(clean);
+            replied = true;
+          }
         }
       } catch (e) {
-        console.warn('[PetController] 工具分流失败:', e?.message);
-        this.bubble.showHint?.('刚才那个没处理好，再说一次？', 2500);
+        console.warn('[PetController] 统一语音执行失败:', e?.message);
+        this.bubble.showHint?.('刚才没处理好，再说一次？', 2200);
       } finally {
         this._toolRouting = false;
         this.doubao?.resumeAudio?.();
-        this._micMutedGuard?.();
-        if (this._voiceActive && this.doubao?.active) this._emitVoiceState('listening');
+        if (this._voiceActive && this.doubao?.active) {
+          this._emitVoiceState(replied ? 'listening' : 'listening');
+        }
       }
     })();
   }
+
 
   /**
    * 行动回路（CUA 式 act-and-verify）：任务 → 截屏 → 定位 → 执行 → 验证 → 重试
@@ -1040,39 +1023,6 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
   }
 
   /** 豆包 DO 标签执行器：豆包已判断意图，这里只管干活 */
-  _execDoubaoCommand(cmd) {
-    this._toolRouting = true;
-    (async () => {
-      try {
-        this.doubao?.suppressAudio?.();
-        this._emitVoiceState('thinking');
-        let result;
-        if (this._isScreenAction?.(cmd) && this._canCaptureScreen()) {
-          result = await this._screenActionLoop(cmd); // 屏幕操作→CUA回路（含AX直击快通路）
-        } else {
-          const reply = await this.chat(cmd); // 其他→GLM 工具链
-          result = reply;
-        }
-        if (result && this._voiceActive) {
-          this.bubble.showText(String(result).slice(0, 120), Math.max(4000, String(result).length * 120));
-          if (this.doubao?.active) {
-            this.doubao.say?.(String(result).slice(0, 200)); // 结果豆包代播
-            this._emitVoiceState('speaking');
-            await new Promise(r => setTimeout(r, Math.min(15000, 1500 + String(result).length * 180)));
-          } else {
-            await this._speakReply(String(result));
-          }
-        }
-      } catch (e) {
-        console.warn('[PetController] DO执行失败:', e?.message);
-        this.bubble.showHint?.('那个没处理好，再说一次？', 2500);
-      } finally {
-        this._toolRouting = false;
-        this.doubao?.resumeAudio?.();
-        if (this._voiceActive && this.doubao?.active) this._emitVoiceState('listening');
-      }
-    })();
-  }
 
   /** 屏幕相关请求判定（触发实时截屏分析） */
   _isScreenRequest(text) {
