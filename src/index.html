@@ -560,16 +560,35 @@
       // 鼠标在 mic/输入条上时窗口仍穿透 → 点击落到下层应用。
       // 现在把 dock 也纳入检测：鼠标在 UI 控件上 → 取消穿透（可点/可输入）。
       let uiHover = false;
-      // ball.js 穿透让权钩子：UI 控件激活（hover 或输入条展开）时小球不得恢复穿透
+      let ballHover = false;
+      // UI 控件激活（hover 或输入条展开）时小球不得恢复穿透
       window.__uiPinned = () => uiHover;
       const updateDockHover = () => {
+        // 小球本体命中检测（emotionBallRenderer 无内置 hover——全屏穿透窗里不检测=点击漏到下层应用）
+        let ballInside = false;
+        try {
+          const el = document.getElementById('emotion-ball-root');
+          if (el) {
+            const r = el.getBoundingClientRect();
+            const pad = 16; // 略放大的命中区
+            ballInside = window.__lastMouseX >= r.left - pad && window.__lastMouseX <= r.right + pad
+              && window.__lastMouseY >= r.top - pad && window.__lastMouseY <= r.bottom + pad;
+          }
+        } catch { /* ignore */ }
         const inside = dock.matches(':hover') || chatBar.style.display === 'flex';
-        if (inside !== uiHover) {
+        if (inside !== uiHover || ballInside !== ballHover) {
           uiHover = inside;
-          try { window.windowAPI?.setIgnoreCursor?.(!inside); } catch (e) { /* 浏览器模式 */ }
+          ballHover = ballInside;
+          const interactive = inside || ballInside;
+          try { window.windowAPI?.setIgnoreCursor?.(!interactive); } catch (e) { /* 浏览器模式 */ }
         }
       };
-      setInterval(updateDockHover, 120); // 轮询兜底（:hover 无法事件化且与 ball.js 的 hover 抢占）
+      // 全局鼠标位置跟踪（穿透检测数据源）
+      window.addEventListener('pointermove', (e) => {
+        window.__lastMouseX = e.clientX;
+        window.__lastMouseY = e.clientY;
+      }, { passive: true });
+      setInterval(updateDockHover, 120); // 轮询兜底
 
       stage.addEventListener('dblclick', (e) => {
         if (sprite.hitTest(e.clientX, e.clientY).length > 0) openChatBar();

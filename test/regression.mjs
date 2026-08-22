@@ -28,7 +28,7 @@ async function doubao(d) {
   d.check('麦克风推流', (await d.ev('!!window.liveRefs.doubao._micStream')).v === true);
   await d.stopVoice();
   await d.ev("(async()=>{ try{ await window.doubaoAPI.stop(); }catch(e){} return 'ok'; })()");
-  await d.ev("localStorage.setItem('pet-voice-engine', 'self')"); // 恢复默认自建引擎
+  await d.ev("localStorage.setItem('pet-voice-engine', 'doubao')"); // 统一架构默认豆包WS（2026-08-22收敛后）
 }
 
 // ---------- UI 组 ----------
