@@ -585,7 +585,18 @@ class VoiceService {
    * @returns {Promise<boolean>}
    */
   async startVoiceLoop(handlers = {}) {
-    if (this._vadActive) return true;
+    if (this._vadActive) {
+      // 早退前自愈：PCM 节点可能已被历史 stop 销毁（会话降级/重启场景）——必须重建，
+      // 否则"转写永远空→EBML失败循环"
+      if (!this._pcmProc || !this._pcmProc.onaudioprocess) {
+        try {
+          const src = this._vadCtx?.createMediaStreamSource?.(this._vadStream);
+          this._ensurePcmCapture(src);
+        } catch { /* ignore */ }
+      }
+      if (handlers.onFinal || handlers.onError) this._vadHandlers = handlers; // 更新回调
+      return true;
+    }
     if (!this._config.asrEnabled) {
       handlers.onError?.('语音识别已在设置中关闭');
       return false;
@@ -660,32 +671,7 @@ class VoiceService {
     const analyser = this._vadCtx.createAnalyser();
     analyser.fftSize = 1024;
     src.connect(analyser);
-    // PCM 直采：ScriptProcessor 并联录音（跳过 MediaRecorder/webm/EBML 解码地狱——
-    // 断句时直接取 PCM 切片转 WAV，头块丢失/块拼接等问题从架构上消灭）
-    this._pcmBuf = [];
-    this._pcmPre = [];   // 预录环（~1s）
-    this._pcmCap = !!this._vadCtx.createScriptProcessor;
-    if (this._pcmCap) {
-      try {
-        const proc = this._vadCtx.createScriptProcessor(4096, 1, 1);
-        proc.onaudioprocess = (ev) => {
-          const ch = ev.inputBuffer.getChannelData(0);
-          const copy = new Float32Array(ch.length);
-          copy.set(ch);
-          if (this._ttsPlayingOutloud) return; // 播报中不录（回声）
-          if (this._vadSpeechStarted) {
-            this._pcmBuf.push(copy);
-            if (this._pcmBuf.length > 400) this._pcmBuf.shift(); // 4096*400≈102s 上限
-          } else {
-            this._pcmPre.push(copy);
-            if (this._pcmPre.length > 12) this._pcmPre.shift(); // ~1s 预录
-          }
-        };
-        src.connect(proc);
-        proc.connect(this._vadCtx.destination); // 需连接才驱动（静音输出）
-        this._pcmProc = proc;
-      } catch (e) { this._pcmCap = false; }
-    }
+    this._ensurePcmCapture(src);
     const buf = new Float32Array(analyser.fftSize);
     const BASE_THRESH = 0.022; // 基准阈值（实测系统输入音量低的机器外放/人声 RMS 仅 0.02-0.04，0.035 会漏）
     const SILENT_BREAK = 16;   // ~16×60ms≈1s 静音 → 断句
@@ -964,6 +950,43 @@ class VoiceService {
   }
 
   /** 停止 VAD 持续听（彻底释放麦克风） */
+  /**
+   * PCM 直采节点（可重建）：ScriptProcessor 并联录音。
+   * 生命周期坑：stopVoiceLoop 会 disconnect 此节点，而 startVoiceLoop 在 _vadActive
+   * 已 true 时直接早退——若不重建，PCM 永久丢失→转写永远空（EBML 地狱回归）。
+   * 每次进 startVoiceLoop（含早退分支）都必须确保它活着。
+   */
+  _ensurePcmCapture(srcNode) {
+    if (this._pcmProc && this._pcmProc.onaudioprocess) return; // 活着
+    if (!this._vadCtx) return;
+    try {
+      const proc = this._vadCtx.createScriptProcessor(4096, 1, 1);
+      proc.onaudioprocess = (ev) => {
+        const ch = ev.inputBuffer.getChannelData(0);
+        const copy = new Float32Array(ch.length);
+        copy.set(ch);
+        if (this._ttsPlayingOutloud) return; // 播报中不录（回声）
+        if (this._vadSpeechStarted) {
+          this._pcmBuf.push(copy);
+          if (this._pcmBuf.length > 400) this._pcmBuf.shift(); // ~102s 上限
+        } else {
+          this._pcmPre.push(copy);
+          if (this._pcmPre.length > 12) this._pcmPre.shift(); // ~1s 预录
+        }
+      };
+      (srcNode || this._vadStreamSource || this._vadCtx.destination) && (srcNode || this._vadCtx.destination);
+      const target = srcNode || this._vadCtx.destination;
+      target.connect ? target.connect(proc) : this._vadCtx.destination.connect(proc);
+      proc.connect(this._vadCtx.destination); // 需连接才驱动（静音输出）
+      this._pcmProc = proc;
+      this._pcmCap = true;
+      console.log('[VoiceService] PCM 采集节点已(重)建');
+    } catch (e) {
+      this._pcmCap = false;
+      console.warn('[VoiceService] PCM 节点创建失败:', e?.message);
+    }
+  }
+
   stopVoiceLoop() {
     this._vadActive = false;
     this._vadGen = (this._vadGen || 0) + 1; // 代际+1：所有在飞 poll 自杀

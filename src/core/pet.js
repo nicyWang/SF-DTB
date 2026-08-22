@@ -1174,9 +1174,14 @@ done 判定必须给证据（防误报）：done=true 时 evidence 必须写明�
       .replace(/data:.*$/gm, '')
       .trim();
     if (isErrText || !clean) {
-      if (this._voiceActive) {
+      // 冷却 60s：服务过载/限流时连续失败不该连环播报"再说一次"（用户被念到烦）
+      const now = Date.now();
+      if (this._voiceActive && now - (this._lastErrHintAt || 0) > 60000) {
+        this._lastErrHintAt = now;
         this.bubble.showHint?.('哎呀，我脑子刚才卡了一下，再说一次？', 2500);
         await this._speakReply('哎呀，我刚才没反应过来，主人再说一次好不好');
+      } else if (this._voiceActive) {
+        this.bubble.showHint?.('（网络开小差了，稍等下再试～）', 2000);
       }
       if (!this._voiceActive) return;
     } else {
