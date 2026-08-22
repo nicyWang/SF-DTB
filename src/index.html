@@ -229,9 +229,7 @@
     import { LLMService } from './core/llm.js';
     import { MemoryService } from './core/memory.js';
     import { PersonalityEngine } from './core/personality.js';
-    import { SpriteRenderer } from './core/sprite.js';
     import { EmotionBallRenderer } from './core/emotionBallRenderer.js';
-    import { BallRenderer } from './core/ball.js';
     import { BubbleUI } from './core/bubble.js';
     import { PetController, CHARACTER_IDS, DEFAULT_CHARACTER_ID } from './core/pet.js';
     import { PerceptionService } from './core/perception.js';
@@ -242,7 +240,6 @@
     import { DigitalHumanEngine } from './core/digitalhuman.js';
     import { KnowledgeBase } from './core/knowledge.js';
     import { DoubaoRealtime } from './core/doubao-realtime.js';
-    import { AvatarLive } from './core/avatar-live.js';
 
     const DEBUG = new URLSearchParams(location.search).get('debug') === '1'
       || localStorage.getItem('pet-debug') === '1';
@@ -324,36 +321,17 @@
       const memory = new MemoryService({ llm, characterId: activeCharacter });
       const personality = new PersonalityEngine(activeCharacter);
 
-      // ---- 2. 渲染器：默认小球；显式 ?character=1 或 pet-ball-mode=0 才走写实立绘 ----
-      const urlParams = new URLSearchParams(location.search);
-      const ballPreference = localStorage.getItem('pet-ball-mode');
-      const BALL_MODE = urlParams.has('ball')
-        || (!urlParams.has('character') && ballPreference !== '0');
+      // ---- 2. 渲染器：emotion-ball 唯一（2026-08-22 架构收敛，旧5套已删） ----
       let sprite;
-      if (BALL_MODE) {
-        log('init emotion ball');
-        sprite = new EmotionBallRenderer();
-        log('emotion ball ready');
-      } else {
-        sprite = new SpriteRenderer({ characters });
-      }
-      try {
-        log('sprite.init()');
-        await sprite.init(document.getElementById('stage'));
-        log('sprite.setCharacter(' + activeCharacter + ')');
-        await sprite.setCharacter(activeCharacter);
-        log('sprite ready');
-        sprite.setScale(BALL_MODE ? 1 : 0.92); // 立绘留边距；小球原比例
-        // 同步托盘菜单的当前角色（避免托盘默认 handsome 而实际是其他角色的不一致）
-        if (window.windowAPI && typeof window.windowAPI.switchCharacter === 'function') {
-          const charInfo = characters.get(activeCharacter);
-          window.windowAPI.switchCharacter(activeCharacter, true, charInfo ? charInfo.name : null); // syncOnly=true 不广播
-        }
-      } catch (err) {
-        // 立绘加载失败：气泡友好提示，其余模块（聊天/记忆/性格）继续可用
-        console.error('[pet-app] 立绘初始化失败:', err);
-        bubble.showText('呜…我的形象加载失败了，但聊天功能还在哦（双击我试试）', 6000);
-        log('sprite fail: ' + err.message);
+      log('init emotion ball');
+      sprite = new EmotionBallRenderer();
+      await sprite.init(document.getElementById('stage'));
+      log('emotion ball ready');
+      sprite.setScale(1);
+      // 同步托盘菜单的当前角色
+      if (window.windowAPI && typeof window.windowAPI.switchCharacter === 'function') {
+        const charInfo = characters.get(activeCharacter);
+        window.windowAPI.switchCharacter(activeCharacter, true, charInfo ? charInfo.name : null); // syncOnly=true 不广播
       }
 
       // ---- 3. 宠物控制器（状态机+行为引擎） ----
@@ -363,17 +341,12 @@
       const knowledge = new KnowledgeBase({ llm });
       // 豆包端到端实时语音（配置了 appId/accessToken 后优先启用：说完即答+服务端VAD打断）
       const doubao = new DoubaoRealtime();
-      const avatarLive = new AvatarLive();
-      // 豆包TTS音频同步喂数字人驱动口型（24k→16k在AvatarLive内重采样）
-      doubao._onAudioFrame = (frame) => {
-        try { avatarLive.feedAudio(frame); } catch (err) { console.warn('[pet-app] 数字人音频驱动失败:', err?.message); }
-      };
       const pet = new PetController({ llm, memory, personality, live2d: sprite, bubble, voice, knowledge, doubao },
         { ...(FAST_IDLE ? { boredMs: 10000, sleepyMs: 20000, tickMs: 2000 } : {}), characterId: activeCharacter });
       await pet.init();
       const perception = new PerceptionService({ llm, memory });
-      // 小球模式：气泡跟随小球头顶（须在 BALL_MODE/sprite 定义之后）
-      if (typeof BALL_MODE !== 'undefined' && BALL_MODE && sprite && sprite._root) {
+      // 气泡跟随小球头顶
+      if (sprite && sprite._root) {
         bubble.followTarget(() => ({
           x: sprite._root.x,
           y: sprite._root.y - (sprite._radiusScaled || 60) - 14,
@@ -693,7 +666,7 @@
       // ---- debug 状态浮层 ----
       // 调试引用（CDP/console 可直接操作各模块）
       perception._ownerPetRef = pet; // 行动回路标志共享（_tick 检查 _screenLooping）
-      window.liveRefs = { llm, memory, personality, sprite, bubble, perception, knowledge, doubao, avatar: avatarLive, getDanmaku: () => danmaku, getLiveMode: () => liveMode };
+      window.liveRefs = { llm, memory, personality, sprite, bubble, perception, knowledge, doubao, getDanmaku: () => danmaku, getLiveMode: () => liveMode };
 
       if (DEBUG) {
         const panel = document.getElementById('debug-panel');

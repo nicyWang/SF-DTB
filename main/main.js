@@ -6,7 +6,6 @@ const { initTray } = require('./tray');
 const { initToolsIPC } = require('./tools');
 const { initEdgeTTSIPC } = require('./edgetts');
 const { initDoubaoIPC } = require('./doubao');
-const { initAvatarIPC } = require('./avatar');
 
 let mainWindow = null;
 let settingsWindow = null;
@@ -399,7 +398,6 @@ app.whenReady().then(() => {
   });
   initEdgeTTSIPC(ipcMain); // Edge TTS（甜美真人音色）
   initDoubaoIPC(ipcMain); // 豆包端到端实时语音（低延迟流式对话）
-  initAvatarIPC(ipcMain); // 火山实时互动数字人（FlowAct-R1）
   initTray(() => mainWindow, {
     onOpenSettings: createSettingsWindow
   });

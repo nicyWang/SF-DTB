@@ -98,11 +98,9 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 // Agent工具说明书（与主进程 main/tools.js 的 TOOL_SPECS 一致的副本）
 const TOOL_SPECS = [
-  { type: 'function', function: { name: 'list_dir', description: '列出目录内容（默认桌面/用户目录）', parameters: { type: 'object', properties: { dir: { type: 'string', description: '目录绝对路径，如 /Users/mac/Desktop' } }, required: [] } } },
   { type: 'function', function: { name: 'read_file', description: '读取文本文件内容', parameters: { type: 'object', properties: { file: { type: 'string', description: '文件绝对路径' } }, required: ['file'] } } },
   { type: 'function', function: { name: 'write_file', description: '写文件（新建/覆盖）', parameters: { type: 'object', properties: { file: { type: 'string', description: '目标路径' }, content: { type: 'string', description: '写入内容' } }, required: ['file', 'content'] } } },
   { type: 'function', function: { name: 'move_file', description: '移动/重命名文件或目录（可用来整理桌面）', parameters: { type: 'object', properties: { src: { type: 'string' }, dst: { type: 'string' } }, required: ['src', 'dst'] } } },
-  { type: 'function', function: { name: 'open_app', description: '打开macOS应用，如 WeChat/Safari/Netease Music', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'open_url', description: '用默认浏览器打开网址', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'run_applescript', description: '执行AppleScript自动化macOS（控制窗口/通知/应用消息等）', parameters: { type: 'object', properties: { script: { type: 'string' } }, required: ['script'] } } },
   { type: 'function', function: { name: 'shell', description: '执行白名单shell命令（ls/cat/mkdir/cp/mv/open/say等）', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } } },
@@ -155,7 +153,6 @@ class PetController {
     this.voice = deps.voice || null; // 语音服务（可选依赖）
     this.knowledge = deps.knowledge || null; // 个人知识库（可选；对话提取+检索注入）
     this.doubao = deps.doubao || null; // 豆包端到端实时语音（可选；配置后优先于 VAD 链路）
-    this.avatar = deps.avatar || null; // 火山实时数字人（可选；语音对话出镜）
     this.perception = deps.perception || null; // 感知服务（可选；场景理解引擎+DND门控主动搭话）
 
     this.opts = { ...DEFAULTS, ...opts };
@@ -579,7 +576,6 @@ class PetController {
           }
         },
         onState: (s) => this._emitVoiceState(s),
-        onAudioEnd: () => this.avatar?.feedAudioEnd?.(),
         onInterrupt: () => {
           this.bubble.showHint?.('（好，你说～）', 1500);
         },
