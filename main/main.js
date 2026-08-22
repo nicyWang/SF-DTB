@@ -1,5 +1,12 @@
 // 桌面AI搭档 - Electron主进程入口
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session } = require('electron');
+
+// ══ 单实例锁（防双开）：第二个实例启动即退 ══
+const __gotLock = app.requestSingleInstanceLock();
+if (!__gotLock) {
+  console.log('[main] 已有小球实例运行，本实例退出');
+  app.quit();
+}
 const path = require('path');
 const fs = require('fs');
 const { initTray } = require('./tray');
