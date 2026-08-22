@@ -298,7 +298,7 @@
   <nav class="snav"><h1>小球设置</h1>
     <a href="#brain" data-sec="brain" class="act">🧠 大脑</a>
     <a href="#voice" data-sec="voice" class="">🎤 语音</a>
-    <a href="#avatarsec" data-sec="avatarsec" class="">🎭 形象</a>
+    <a href="#avatarsec" data-sec="avatarsec" class="">🎨 外观</a>
     <a href="#perception" data-sec="perception" class="">👁 感知与主动</a>
     <a href="#wecom" data-sec="wecom" class="">💬 微信</a>
     <a href="#about" data-sec="about" class="">ℹ️ 关于</a>
@@ -388,154 +388,46 @@
 
   </section>
   <section class="sec" id="sec-avatarsec">
-  <h2>实时数字人（火山 FlowAct-R1，可选）</h2>
+  <h2>外观与互动</h2>
   <div class="card">
-    <div class="hint" style="margin-bottom:8px">
-      配置后语音对话时右下角出现真人数字人视频（口型同步）。需在火山控制台开通"实时互动数字人API"+"ByteRTC"，并购买并发额度。<br>
-      形象图需公网可访问的清晰半身照（正面、人脸占比大）。
+    <div class="hint" style="margin-bottom:10px">
+      小球形象为官方情绪引擎（Emotion Ball），表情会跟随对话情绪自动变化：开心时眯眼笑、思考时转圈、被摸头会开心。无需配置。
     </div>
-    <div class="row"><label for="av-account">火山账号ID</label><input type="text" id="av-account" placeholder="控制台右上角账号ID"></div>
-    <div class="row"><label for="av-ak">AccessKey</label><input type="text" id="av-ak" placeholder="IAM AccessKey"></div>
-    <div class="row"><label for="av-sk">SecretKey</label><input type="password" id="av-sk" placeholder="IAM SecretKey"></div>
-    <div class="row"><label for="av-role">形象图URL</label><input type="text" id="av-role" placeholder="https://... 半身正面照"></div>
-    <div class="row"><label for="av-rtcid">ByteRTC AppId</label><input type="text" id="av-rtcid" placeholder="RTC控制台创建应用"></div>
-    <div class="row"><label for="av-rtctoken">RTC Token</label><input type="password" id="av-rtctoken" placeholder="临时Token（测试用）"></div>
-  </div>
-
-  <h2>角色工坊</h2>
-  <div class="card" id="studio-card">
-    <!-- 1. 我的角色 -->
     <div class="row">
-      <label>我的角色</label>
-      <div id="char-list" class="char-list"><span class="hint">加载中…</span></div>
-      <div class="hint">点击卡片切换当前角色；切换会重置该角色的独立性格和记忆数据</div>
+      <label for="bubble-style">气泡样式</label>
+      <select id="bubble-style">
+        <option value="card">卡片（默认）</option>
+        <option value="comic">漫画尖角</option>
+      </select>
+      <div class="hint" style="font-size:11px">对话气泡的外观风格</div>
     </div>
-
-    <!-- 2. 新建角色：两个 Tab -->
+    <div class="row switch-wrap">
+      <label class="switch">
+        <input type="checkbox" id="emotion-motion" checked>
+        <span class="slider"></span>
+      </label>
+      <span>表情动画（眨眼/呼吸/待机动作）</span>
+    </div>
+    <div class="row switch-wrap">
+      <label class="switch">
+        <input type="checkbox" id="roam-enabled" checked>
+        <span class="slider"></span>
+      </label>
+      <span>闲时漫游（长时间不用电脑时自己走走）</span>
+    </div>
     <div class="row">
-      <label>新建角色</label>
-      <div class="tabs">
-        <button type="button" class="tab-btn active" data-tab="photo">上传照片</button>
-        <button type="button" class="tab-btn" data-tab="form">AI 生成</button>
-      </div>
-
-      <div id="tab-photo" class="tab-pane">
-        <div class="row">
-          <label for="photo-file">选择照片</label>
-          <input type="file" id="photo-file" accept="image/*">
-          <img id="photo-preview" class="photo-preview" alt="照片预览" style="display:none">
-        </div>
-        <div class="row">
-          <label for="photo-style">转绘风格</label>
-          <select id="photo-style"></select>
-          <div class="hint">用 LLM 视觉模型提取照片特征后转绘（需配置上方 LLM 服务）</div>
-        </div>
-        <div class="row">
-          <button id="btn-photo-convert" class="primary">AI 转绘</button>
-        </div>
-      </div>
-
-      <div id="tab-form" class="tab-pane" style="display:none">
-        <div class="row inline">
-          <div class="grow">
-            <label for="form-style">风格</label>
-            <select id="form-style"></select>
-          </div>
-          <div class="grow">
-            <label for="form-gender">性别</label>
-            <select id="form-gender"></select>
-          </div>
-          <div class="grow">
-            <label for="form-age">年龄段</label>
-            <select id="form-age"></select>
-          </div>
-        </div>
-        <div class="row">
-          <label>面部气质（可多选 2-3 个）</label>
-          <div id="form-faces" class="chips"></div>
-        </div>
-        <div class="row inline">
-          <div class="grow">
-            <label for="form-hair">发型</label>
-            <select id="form-hair"></select>
-          </div>
-          <div class="grow">
-            <label for="form-temperament">整体气质</label>
-            <select id="form-temperament"></select>
-          </div>
-        </div>
-        <div class="row">
-          <label for="form-clothing">服装</label>
-          <select id="form-clothing"></select>
-        </div>
-        <div class="row">
-          <label for="form-extra">补充描述（可选）</label>
-          <textarea id="form-extra" placeholder="例如：戴金丝眼镜，手拿咖啡杯…"></textarea>
-        </div>
-        <div class="row">
-          <button id="btn-form-generate" class="primary">生成立绘</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 3. 生图 API 配置 -->
-    <div class="sub-block">
-      <div class="row">
-        <label>生图 API 配置（OpenAI 兼容 images 接口）</label>
-        <div class="inline">
-          <div class="grow">
-            <input type="text" id="img-base" placeholder="Base URL：https://api.openai.com/v1">
-          </div>
-        </div>
-        <div class="inline" style="margin-top:6px">
-          <div class="grow">
-            <input type="password" id="img-key" placeholder="API Key：sk-...">
-          </div>
-          <div class="grow">
-            <input type="text" id="img-model" placeholder="模型：如 dall-e-3（mock=本地占位图）">
-          </div>
-        </div>
-        <div class="inline" style="margin-top:8px">
-          <button id="btn-img-save">保存配置</button>
-          <button id="btn-img-test">测试生图</button>
-          <span class="test-result" id="img-test-result"></span>
-        </div>
-        <div class="hint">模型填 mock 可零成本体验完整流程（程序化占位立绘）</div>
-      </div>
-    </div>
-
-    <!-- 4/5/6. 流程状态 + 生成预览 -->
-    <div class="row gen-status-row" id="gen-status-row" style="display:none">
-      <span class="spinner" id="gen-spinner" style="display:none"></span>
-      <span id="gen-status"></span>
-    </div>
-    <div class="row" id="gen-result" style="display:none">
-      <div class="gen-result-wrap">
-        <img id="gen-preview-img" alt="生成立绘预览">
-        <div class="gen-result-side">
-          <div class="row">
-            <label for="char-name">角色名字</label>
-            <input type="text" id="char-name" placeholder="给新角色起个名字…" maxlength="20">
-          </div>
-          <div class="gen-btns">
-            <button id="btn-gen-save" class="primary">用这张 · 保存角色</button>
-            <button id="btn-gen-regen">重生成</button>
-          </div>
-          <div class="gen-btns" id="switch-after-save" style="display:none">
-            <button id="btn-gen-switch" class="primary">立即切换为当前角色</button>
-          </div>
-          <details class="gen-prompt">
-            <summary>查看生成提示词</summary>
-            <pre id="gen-prompt-text"></pre>
-          </details>
-        </div>
+      <label>互动方式</label>
+      <div class="hint">
+        · 点一下小球 = 摸摸头（她会开心）<br>
+        · 双击小球 = 打字聊天<br>
+        · 长按 1 秒 = 进入拖拽模式（把她拖到喜欢的位置）<br>
+        · 右键 = 完整菜单
       </div>
     </div>
   </div>
-
   </section>
   <section class="sec" id="sec-voice">
-  <h2>实时语音（豆包端到端，推荐）</h2>
+  <h2>语音对话（对小球说话）</h2>
   <div class="card">
     <div class="hint" style="margin-bottom:8px">
       端到端实时语音大模型：说完即答（几百毫秒），服务端智能断句+自动打断，最接近打电话体验。<br>
@@ -558,43 +450,9 @@
       <label for="db-role">人设（背景/性格）</label>
       <textarea id="db-role" rows="2" placeholder="例：你是主人的桌面小球宠物，陪伴主人工作，性格甜美粘人"></textarea>
     </div>
-    <div class="row">
-      <label for="asr-preset">语音识别 ASR</label>
-      <select id="asr-preset">
-        <option value="">跟随 LLM 配置</option>
-        <option value="zhipu">智谱 GLM-ASR</option>
-        <option value="volc">火山方舟</option>
-        <option value="openai">OpenAI Whisper</option>
-        <option value="groq">Groq Whisper</option>
-        <option value="custom">自定义</option>
-      </select>
-    </div>
-    <div class="row"><label for="asr-base">ASR 接口地址</label><input type="text" id="asr-base" placeholder="https://open.bigmodel.cn/api/paas/v4"></div>
-    <div class="row"><label for="asr-key">ASR API Key</label><input type="password" id="asr-key"></div>
-    <div class="row"><label for="asr-model">ASR 模型</label><input type="text" id="asr-model" placeholder="glm-asr-2512"></div>
-    <div class="row"><label for="asr-appid">火山 AppID</label><input type="text" id="asr-appid" placeholder="选火山预设后填（豆包同款AppID）"></div>
-    <div class="row"><label for="asr-token">火山 Access Token</label><input type="password" id="asr-token" placeholder="豆包同款AccessToken"></div>
-    <div class="row">
-      <label for="tts-preset">语音合成 TTS</label>
-      <select id="tts-preset">
-        <option value="">跟随 LLM 配置</option>
-        <option value="zhipu">智谱 GLM-TTS</option>
-        <option value="volc">火山方舟</option>
-        <option value="openai">OpenAI TTS</option>
-        <option value="custom">自定义</option>
-      </select>
-    </div>
-    <div class="row"><label for="tts-base">TTS 接口地址</label><input type="text" id="tts-base" placeholder="https://open.bigmodel.cn/api/paas/v4"></div>
-    <div class="row"><label for="tts-key">TTS API Key</label><input type="password" id="tts-key"></div>
-    <div class="row"><label for="tts-model">TTS 模型</label><input type="text" id="tts-model" placeholder="glm-tts"></div>
-    <div class="hint" style="font-size:11px;margin:4px 0 8px">留空=跟随上方 LLM 配置（OpenAI 兼容端点通吃：智谱/火山/OpenAI/Groq/DeepSeek…）。想用不同厂商组合就单独填。</div>
-    <div class="row">
-      <label for="voice-engine">语音引擎</label>
-      <select id="voice-engine">
-        <option value="self">全能模式（自建管线·GLM原生工具调用）</option>
-        <option value="doubao">极速模式（豆包端到端·纯聊天最快）</option>
-      </select>
-      <div class="hint" style="font-size:11px">全能模式：GLM 单一大脑直接操控电脑（工具调用原生、可调试、便宜）；极速模式：豆包端到端（说完即答、音色活，工具走标签协议）。默认全能。</div>
+    <div class="hint" style="font-size:11px;background:#f0f7ff;padding:8px;border-radius:6px;margin:8px 0">
+      💡 语音链路已收敛：说话识别和语音合成由豆包实时语音一体提供（无需单独配置 ASR/TTS）。
+      上方 AppID/Token 同时用于听与说。
     </div>
     <div class="row">
       <label for="db-bargein">实时打断（她说话时插嘴）</label>
@@ -620,11 +478,6 @@
         <span class="slider"></span>
       </label>
       <span>语音播报（TTS，回复自动朗读）</span>
-    </div>
-    <div class="row">
-      <label for="edge-tts-voice">真人音色（Edge TTS 神经网络语音）</label>
-      <select id="edge-tts-voice"></select>
-      <div class="hint">微软神经网络音色（甜美真人感），免费；不可用时自动降级智谱TTS→系统TTS</div>
     </div>
     <div class="row">
       <label for="voice-tts-rate">播报语速（0.8 ~ 1.2）：<span id="voice-tts-rate-value">1.0</span></label>
@@ -742,8 +595,7 @@
       $('db-voice').value = dbc.voice || 'zh_female_xiaohe_jupiter_bigtts';
       $('voice-engine').value = localStorage.getItem('pet-voice-engine') || 'self';
       const asrC = loadJSON('pet-asr-config', {});
-      $('asr-base').value = asrC.baseURL || ''; $('asr-key').value = asrC.apiKey || ''; $('asr-model').value = asrC.model || ''; $('asr-appid').value = asrC.appId || ''; $('asr-token').value = asrC.accessToken || '';
-      $('asr-preset').value = asrC._preset || '';
+      // ASR/TTS 独立配置已收敛移除（豆包WS一体）；旧数据保留在 localStorage 不迁移
       const ttsC = loadJSON('pet-tts-config', {});
       $('tts-base').value = ttsC.baseURL || ''; $('tts-key').value = ttsC.apiKey || ''; $('tts-model').value = ttsC.model || '';
       $('tts-preset').value = ttsC._preset || '';
@@ -800,7 +652,6 @@
           ttsRate: parseFloat($('voice-tts-rate').value) || 1,
           voiceName: $('voice-voice').value,
           asrEnabled: $('voice-asr-enabled').checked,
-          edgeVoice: $('edge-tts-voice').value || 'zh-CN-XiaoyiNeural'
         }
       };
     }
@@ -817,7 +668,6 @@
         localStorage.setItem(KEYS.danmaku, JSON.stringify(cfg.danmaku));
         localStorage.setItem(KEYS.voice, JSON.stringify(cfg.voice));
         localStorage.setItem('pet-voice-engine', $('voice-engine').value);
-        localStorage.setItem('pet-asr-config', JSON.stringify({ provider: $('asr-preset').value === 'volc' ? 'volc' : '', baseURL: $('asr-base').value.trim(), apiKey: $('asr-key').value.trim(), model: $('asr-model').value.trim(), appId: $('asr-appid').value.trim(), accessToken: $('asr-token').value.trim(), _preset: $('asr-preset').value }));
         localStorage.setItem('pet-tts-config', JSON.stringify({ baseURL: $('tts-base').value.trim(), apiKey: $('tts-key').value.trim(), model: $('tts-model').value.trim(), _preset: $('tts-preset').value }));
         localStorage.setItem('pet-doubao-realtime-config', JSON.stringify(cfg.doubao));
         localStorage.setItem('pet-avatar-config', JSON.stringify(cfg.avatar));
@@ -1391,7 +1241,6 @@
 
     // Edge TTS 真人音色（主进程提供列表；失败给内置兜底）
     async function loadEdgeVoices(selected) {
-      const sel = $('edge-tts-voice');
       const fallback = [
         { id: 'zh-CN-XiaoyiNeural', label: '晓伊（甜美活泼）' },
         { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓（温暖亲切）' },
@@ -1511,7 +1360,6 @@
         }
       });
     }
-    hook('asr-preset', 'asr'); hook('tts-preset', 'tts');
     var llmSel = document.getElementById('llm-preset');
     if (llmSel) llmSel.addEventListener('change', function () {
       var pr = PRESETS.llm[llmSel.value];
