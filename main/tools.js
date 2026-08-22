@@ -716,14 +716,14 @@ TOOLS['ui-list'] = async ({ filter = '', app }) => {
 
 // GLM/OpenAI function-calling 工具定义（给LLM看的说明书）
 const TOOL_SPECS = [
-  { type: 'function', function: { name: 'read_file', description: '读取文本文件内容', parameters: { type: 'object', properties: { file: { type: 'string', description: '文件绝对路径' } }, required: ['file'] } } },
-  { type: 'function', function: { name: 'write_file', description: '写文件（新建/覆盖）', parameters: { type: 'object', properties: { file: { type: 'string', description: '目标路径' }, content: { type: 'string', description: '写入内容' } }, required: ['file', 'content'] } } },
-  { type: 'function', function: { name: 'move_file', description: '移动/重命名文件或目录（可用来整理桌面）', parameters: { type: 'object', properties: { src: { type: 'string' }, dst: { type: 'string' } }, required: ['src', 'dst'] } } },
-  { type: 'function', function: { name: 'open_url', description: '用默认浏览器打开网址', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
-  { type: 'function', function: { name: 'run_applescript', description: '执行AppleScript自动化macOS（控制窗口/通知/应用消息等）', parameters: { type: 'object', properties: { script: { type: 'string' } }, required: ['script'] } } },
+  { type: 'function', function: { name: 'read-file', description: '读取文本文件内容', parameters: { type: 'object', properties: { file: { type: 'string', description: '文件绝对路径' } }, required: ['file'] } } },
+  { type: 'function', function: { name: 'write-file', description: '写文件（新建/覆盖）', parameters: { type: 'object', properties: { file: { type: 'string', description: '目标路径' }, content: { type: 'string', description: '写入内容' } }, required: ['file', 'content'] } } },
+  { type: 'function', function: { name: 'move-file', description: '移动/重命名文件或目录（可用来整理桌面）', parameters: { type: 'object', properties: { src: { type: 'string' }, dst: { type: 'string' } }, required: ['src', 'dst'] } } },
+  { type: 'function', function: { name: 'open-url', description: '用默认浏览器打开网址', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'run-applescript', description: '执行AppleScript自动化macOS（控制窗口/通知/应用消息等）', parameters: { type: 'object', properties: { script: { type: 'string' } }, required: ['script'] } } },
   { type: 'function', function: { name: 'shell', description: '执行白名单shell命令（ls/cat/mkdir/cp/mv/open/say等）', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } } },
   { type: 'function', function: { name: 'screenshot', description: '截取全屏保存到/tmp（需要屏幕录制权限）', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'system_info', description: '获取系统信息（用户/内存/时间）', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'system-info', description: '获取系统信息（用户/内存/时间）', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'tool-health', description: '检查Agent工具层是否可用', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'open-app', description: '打开macOS应用（如 Safari、WeChat），仅允许字母数字空格名称', parameters: { type: 'object', properties: { appName: { type: 'string', description: '应用名，如 "Safari"' } }, required: ['appName'] } } },
   { type: 'function', function: { name: 'list-dir', description: '列目录（最多50项含类型），仅允许 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '目录路径，如 "~/Desktop"' } }, required: ['dirPath'] } } },
@@ -794,6 +794,14 @@ function fuzzyFindApp(name) {
   return null;
 }
 
+// ══ 命名统一：kebab 别名（显式赋值，模型侧 SPEC 已全部 kebab） ══
+TOOLS['move-file'] = TOOLS.move_file;
+TOOLS['read-file'] = TOOLS.read_file;
+TOOLS['write-file'] = TOOLS.write_file;
+TOOLS['open-url'] = TOOLS.open_url;
+TOOLS['run-applescript'] = TOOLS.run_applescript;
+TOOLS['system-info'] = TOOLS.system_info;
+
 function initToolsIPC(ipcMain, getLogger) {
   ipcMain.handle('tool-invoke', async (_e, name, args) => {
     const log = getLogger || (() => {});
@@ -810,5 +818,6 @@ function initToolsIPC(ipcMain, getLogger) {
     }
   });
 }
+
 
 module.exports = { initToolsIPC, TOOL_SPECS, isValidAppName, resolveAllowedDir, createReminderManager };

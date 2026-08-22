@@ -98,14 +98,14 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 // Agent工具说明书（与主进程 main/tools.js 的 TOOL_SPECS 一致的副本）
 const TOOL_SPECS = [
-  { type: 'function', function: { name: 'read_file', description: '读取文本文件内容', parameters: { type: 'object', properties: { file: { type: 'string', description: '文件绝对路径' } }, required: ['file'] } } },
-  { type: 'function', function: { name: 'write_file', description: '写文件（新建/覆盖）', parameters: { type: 'object', properties: { file: { type: 'string', description: '目标路径' }, content: { type: 'string', description: '写入内容' } }, required: ['file', 'content'] } } },
-  { type: 'function', function: { name: 'move_file', description: '移动/重命名文件或目录（可用来整理桌面）', parameters: { type: 'object', properties: { src: { type: 'string' }, dst: { type: 'string' } }, required: ['src', 'dst'] } } },
-  { type: 'function', function: { name: 'open_url', description: '用默认浏览器打开网址', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
-  { type: 'function', function: { name: 'run_applescript', description: '执行AppleScript自动化macOS（控制窗口/通知/应用消息等）', parameters: { type: 'object', properties: { script: { type: 'string' } }, required: ['script'] } } },
+  { type: 'function', function: { name: 'read-file', description: '读取文本文件内容', parameters: { type: 'object', properties: { file: { type: 'string', description: '文件绝对路径' } }, required: ['file'] } } },
+  { type: 'function', function: { name: 'write-file', description: '写文件（新建/覆盖）', parameters: { type: 'object', properties: { file: { type: 'string', description: '目标路径' }, content: { type: 'string', description: '写入内容' } }, required: ['file', 'content'] } } },
+  { type: 'function', function: { name: 'move-file', description: '移动/重命名文件或目录（可用来整理桌面）', parameters: { type: 'object', properties: { src: { type: 'string' }, dst: { type: 'string' } }, required: ['src', 'dst'] } } },
+  { type: 'function', function: { name: 'open-url', description: '用默认浏览器打开网址', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
+  { type: 'function', function: { name: 'run-applescript', description: '执行AppleScript自动化macOS（控制窗口/通知/应用消息等）', parameters: { type: 'object', properties: { script: { type: 'string' } }, required: ['script'] } } },
   { type: 'function', function: { name: 'shell', description: '执行白名单shell命令（ls/cat/mkdir/cp/mv/open/say等）', parameters: { type: 'object', properties: { cmd: { type: 'string' } }, required: ['cmd'] } } },
   { type: 'function', function: { name: 'screenshot', description: '截取全屏保存到/tmp（需要屏幕录制权限）', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'system_info', description: '获取系统信息（用户/内存/时间）', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'system-info', description: '获取系统信息（用户/内存/时间）', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'tool-health', description: '检查Agent工具层是否可用', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'open-app', description: '打开macOS应用（安全版：应用名仅限字母数字空格，如 Safari / WeChat / Netease Music）', parameters: { type: 'object', properties: { appName: { type: 'string', description: '应用名' } }, required: ['appName'] } } },
   { type: 'function', function: { name: 'list-dir', description: '列出目录内容（安全版：仅限 ~/Desktop ~/Documents ~/Downloads ~/WorkBuddy，最多50项）', parameters: { type: 'object', properties: { dirPath: { type: 'string', description: '如 ~/Desktop' } }, required: ['dirPath'] } } },
@@ -419,7 +419,7 @@ class PetController {
           && typeof this.llm.chatWithTools === 'function');
         if (hasTools) {
           // 工具铁律：防止历史"已打开"类回复让模型以为无需调用（记忆污染免疫）
-          const toolRule = { role: 'system', content: '【工具使用铁律】你不能直接改变电脑状态，必须调用工具真实执行；历史里说过"已打开/已完成"不代表现在完成了，主人再次要求就重新调用。不调工具就说"已完成"是撒谎。【工具选择规则】打开/启动应用→立即用 open-app（appName填应用名如"备忘录"对应Notes、"微信"对应WeChat，不要去找文件！应用不在文件夹里）；整理桌面→tidy-desktop（一步到位，别去逐个move_file）；设置提醒/闹钟→set-reminder；发消息→wechat-send；关闭应用→close-app；搜索资料→web-search；看目录→list-dir；点界面元素→ui-click；输入文字→type-text/ui-set；组合键→hotkey-text。选错工具=任务失败。' };
+          const toolRule = { role: 'system', content: '【工具使用铁律】你不能直接改变电脑状态，必须调用工具真实执行；历史里说过"已打开/已完成"不代表现在完成了，主人再次要求就重新调用。不调工具就说"已完成"是撒谎。【工具选择规则】打开/启动应用→立即用 open-app（appName填应用名如"备忘录"对应Notes、"微信"对应WeChat，不要去找文件！应用不在文件夹里）；整理桌面→tidy-desktop（一步到位，别去逐个move-file）；设置提醒/闹钟→set-reminder；发消息→wechat-send；关闭应用→close-app；搜索资料→web-search；看目录→list-dir；点界面元素→ui-click；输入文字→type-text/ui-set；组合键→hotkey-text。选错工具=任务失败。' };
           reply = await this.llm.chatWithTools([...messages, toolRule], TOOL_SPECS,
             // 工具执行器：IPC到主进程
             async (name, args) => {

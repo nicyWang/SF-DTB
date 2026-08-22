@@ -13,7 +13,8 @@ pkill -9 -f "afplay /.*pet-edgetts" 2>/dev/null
 pkill -9 -f "afplay.*tts-" 2>/dev/null
 sleep 1
 
-# 3) 校验清零
+# 3) 校验清零（等进程真死透——kill 后端口可能残留几秒，导致新实例被单实例锁挡/CDP误判就绪）
+sleep 2
 LEFT=$(pgrep -f "desktop-pet/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" | wc -l | tr -d ' ')
 if [ "$LEFT" != "0" ]; then
   echo "警告：仍有 $LEFT 个残留进程，再杀一轮"
