@@ -347,19 +347,20 @@ class PetController {
       [/困|睡|晚安|早安|呵欠|打哈欠|揉眼睛|夜里|深夜/, 'sleepy'],
       [/无聊|没意思|好闲|发呆|摸鱼|随便|都行|不知道该/, 'bored'],
     ];
-    // 用户文本优先：主人开心→她 excited/happy；主人低落→她 sad(共情) 等
+    // ★ 回复文本优先（汪总需求：表情跟随"她说了什么"的情绪，不是用户说了什么）
+    const rText = String(reply || '');
+    for (const [re, emo] of rules) {
+      if (re.test(rText)) { this.setEmotion(emo, 8000); return; }
+    }
+    // 回复无情绪信号 → 用户强情绪兜底（共情）
     const u = String(userText || '');
     const userRules = [
       [/哈哈|嘻嘻|太好了|真棒|厉害|开心|好耶/, 'excited'],
       [/难过|伤心|累|烦|压力|不开心|委屈|想哭|难受/, 'sad'],
-      [/晚安|睡了|困|早上好|早安/, u.includes('晚') || u.includes('困') || u.includes('睡') ? 'sleepy' : 'happy'],
-      [/你好|在吗|嗨|哈喽/, 'happy'],
+      [/晚安|睡了|困/, 'sleepy'],
     ];
     for (const [re, emo] of userRules) {
       if (re.test(u)) { this.setEmotion(emo, 8000); return; }
-    }
-    for (const [re, emo] of rules) {
-      if (re.test(txt)) { this.setEmotion(emo, 8000); return; }
     }
     if (/[!?！？]{1,3}$/.test(String(reply || '').trim())) { this.setEmotion('excited', 6000); return; }
     if (/^(好的|明白|收到|当然|可以|没问题|我来|帮你)/.test(String(reply || '').trim())) {

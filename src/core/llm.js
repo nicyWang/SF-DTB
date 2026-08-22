@@ -108,13 +108,21 @@ class LLMService {
         return this._friendlyError(null, res.status, await this._errText(res));
       }
       const full = await this._readToolStream(res, onToolCall);
-      if (full !== null) {
-        if (!full.trim()) return '（模型返回空，请重试）';
-        return full;
+      let msg = null;
+      if (full !== null && full.trim()) return full; // 纯文本回复，直接返回
+      if (full !== null && !full.trim()) {
+        // 流式返回空正文：若有 tool_calls → 构造 msg 等价物走统一工具执行路径
+        if (this._lastToolCalls && this._lastToolCalls.length) {
+          msg = { content: '', tool_calls: this._lastToolCalls };
+        } else {
+          return '（模型返回空，请重试）';
+        }
+      } else {
+        // 非流式响应
+        const data = await res.json();
+        msg = data?.choices?.[0]?.message;
+        if (!msg) return '（模型返回空，请重试）';
       }
-      const data = await res.json();
-      const msg = data?.choices?.[0]?.message;
-      if (!msg) return '（模型返回空，请重试）';
       let toolCalls = this._lastToolCalls || msg.tool_calls;
       this._lastToolCalls = null;
       // 无工具调用 且 首轮 且 用户消息像操作指令 → glm-4-flash 工具多时"选择困难"不发起；
@@ -236,6 +244,7 @@ class LLMService {
     if (toolBuffers.size) {
       this._lastToolCalls = [...toolBuffers.entries()].sort((a, b) => a[0] - b[0]).map(([, item]) => ({
         id: item.id,
+        type: 'function', // 豆包校验 tool_calls 必须带 type，缺失→二轮 400
         function: { name: item.name, arguments: item.arguments || '{}' },
       }));
       return '';
