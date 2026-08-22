@@ -382,6 +382,21 @@ app.whenReady().then(() => {
   });
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
 
+  // macOS 系统级麦克风授权自愈：TCC 记录可能被系统清理/重置，每次启动主动检查+申请
+  // （无授权时 Chromium 直接报 "Requested device not found"，且不弹窗——必须系统层触发）
+  if (process.platform === 'darwin') {
+    const { getSystemMediaAccessStatus, askSystemMediaAccessStatus } = require('electron');
+    try {
+      const st = typeof getSystemMediaAccessStatus === 'function' ? getSystemMediaAccessStatus('microphone') : 'granted';
+      console.log('[main] 麦克风系统授权状态:', st);
+      if (st === 'not-determined' && typeof askSystemMediaAccessStatus === 'function') {
+        askSystemMediaAccessStatus('microphone').then((granted) => {
+          console.log('[main] 麦克风授权申请结果:', granted);
+        }).catch(() => {});
+      }
+    } catch (e) { console.warn('[main] 媒体权限检查失败:', e?.message); }
+  }
+
   createMainWindow();
 
   // 渲染进程崩溃自愈：Chromium 底层 bug（字体/GPU）偶发 SIGSEGV 时
